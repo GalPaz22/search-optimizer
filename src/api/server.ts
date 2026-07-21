@@ -10,6 +10,7 @@ import { metricsRoutes } from "./routes/metrics.js";
 import { agentRoutes } from "./routes/agent.js";
 import { ruleRoutes } from "./routes/rules.js";
 import { listTenants } from "../core/tenant.js";
+import { getMongo, getRedis } from "../core/db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,7 +40,26 @@ export async function buildServer() {
     app.log.warn("OPS_PASSWORD not set — API is unauthenticated (dev only)");
   }
 
-  app.get("/api/health", async () => ({ ok: true, ts: new Date().toISOString() }));
+  // Unauthenticated on purpose (Render's health checker hits this with no
+  // credentials) — mirrors dashboard-server's /health shape: booleans only,
+  // no connection strings or other sensitive detail.
+  app.get("/api/health", async () => {
+    const [redis, mongoOk] = await Promise.all([
+      getRedis(),
+      getMongo()
+        .then((c) => c.db("admin").command({ ping: 1 }))
+        .then(() => true)
+        .catch(() => false),
+    ]);
+    return {
+      ok: true,
+      ts: new Date().toISOString(),
+      services: {
+        redis: { connected: !!redis?.isOpen },
+        mongodb: { connected: mongoOk },
+      },
+    };
+  });
   app.get("/api/tenants", async () => listTenants());
 
   await app.register(experimentRoutes, { prefix: "/api" });
