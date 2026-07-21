@@ -1,0 +1,60 @@
+import Fastify from "fastify";
+import basicAuth from "@fastify/basic-auth";
+import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { experimentRoutes } from "./routes/experiments.js";
+import { proposalRoutes } from "./routes/proposals.js";
+import { metricsRoutes } from "./routes/metrics.js";
+import { agentRoutes } from "./routes/agent.js";
+import { ruleRoutes } from "./routes/rules.js";
+import { listTenants } from "../core/tenant.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+export async function buildServer() {
+  const app = Fastify({ logger: true });
+
+  await app.register(cors, { origin: true });
+
+  const opsPassword = process.env.OPS_PASSWORD;
+  if (opsPassword) {
+    await app.register(basicAuth, {
+      validate: async (username, password) => {
+        if (password !== opsPassword) throw new Error("Unauthorized");
+      },
+      authenticate: { realm: "search-optimizer" },
+    });
+    app.addHook("onRequest", function (req: any, reply: any, done: any) {
+      // UI static assets stay open; all /api/* requires auth
+      if (req.url.startsWith("/api/")) return (app as any).basicAuth(req, reply, done);
+      done();
+    } as any);
+  } else {
+    app.log.warn("OPS_PASSWORD not set — API is unauthenticated (dev only)");
+  }
+
+  app.get("/api/health", async () => ({ ok: true, ts: new Date().toISOString() }));
+  app.get("/api/tenants", async () => listTenants());
+
+  await app.register(experimentRoutes, { prefix: "/api" });
+  await app.register(proposalRoutes, { prefix: "/api" });
+  await app.register(metricsRoutes, { prefix: "/api" });
+  await app.register(agentRoutes, { prefix: "/api" });
+  await app.register(ruleRoutes, { prefix: "/api" });
+
+  // Serve built ops UI if present
+  const uiDist = path.resolve(__dirname, "../../ui/dist");
+  try {
+    await app.register(fastifyStatic, { root: uiDist, wildcard: false });
+  } catch {
+    app.log.warn("ops UI not built (ui/dist missing) — API-only mode");
+  }
+  app.setNotFoundHandler((req, reply) => {
+    if (!req.url.startsWith("/api/")) return (reply as any).sendFile?.("index.html") ?? reply.code(404).send();
+    reply.code(404).send({ error: "not found" });
+  });
+
+  return app;
+}

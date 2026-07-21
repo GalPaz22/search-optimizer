@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: search-optimizer
+    env: node
+    plan: starter
+    buildCommand: npm install && npm run ui:build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPS_PASSWORD
+        sync: false
+      - key: AGENT_NIGHTLY
+        value: "true"
+      - key: AGENT_INTERVAL_DAYS
+        value: "2"
+      - key: AGENT_MONTHLY_BUDGET_USD
+        value: "20"
