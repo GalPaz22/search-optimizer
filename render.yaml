@@ -3,7 +3,7 @@ services:
     name: search-optimizer
     env: node
     plan: starter
-    buildCommand: npm install && npm run ui:build
+    buildCommand: npm install --include=dev && npm run ui:build
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
