@@ -27,8 +27,12 @@ export async function buildServer() {
       authenticate: { realm: "search-optimizer" },
     });
     app.addHook("onRequest", function (req: any, reply: any, done: any) {
-      // UI static assets stay open; all /api/* requires auth
-      if (req.url.startsWith("/api/")) return (app as any).basicAuth(req, reply, done);
+      // UI static assets stay open; /api/health stays open too (Render's own
+      // health checker hits it without credentials); everything else under
+      // /api/* requires auth.
+      if (req.url.startsWith("/api/") && req.url !== "/api/health") {
+        return (app as any).basicAuth(req, reply, done);
+      }
       done();
     } as any);
   } else {
