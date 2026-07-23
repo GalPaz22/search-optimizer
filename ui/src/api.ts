@@ -1,6 +1,9 @@
 async function req(path: string, init?: RequestInit) {
+  // Fastify's default JSON body parser rejects a request that declares
+  // content-type: application/json but sends no body at all — only set the
+  // header when there's actually a body to parse.
   const res = await fetch(path, {
-    headers: { "content-type": "application/json" },
+    ...(init?.body ? { headers: { "content-type": "application/json" } } : {}),
     ...init,
   });
   if (!res.ok) {
