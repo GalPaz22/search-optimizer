@@ -23,6 +23,16 @@ async function getTenantLabels(tenant: Tenant): Promise<{ softCategories: string
   return { softCategories: flat(softCategories), categories: flat(categories) };
 }
 
+const PinnedResultsPatch = z
+  .array(
+    z.object({
+      query: z.string().min(1),
+      productIds: z.array(z.union([z.string(), z.number()])).min(1),
+      enabled: z.boolean().default(true),
+    })
+  )
+  .optional();
+
 const EmitParsedRule = z.object({
   name: z.string().min(3).max(80),
   condition: z.object({
@@ -48,6 +58,7 @@ const EmitParsedRule = z.object({
         limit: z.number().int().min(1).max(20).default(5),
       })
       .optional(),
+    pinnedResults: PinnedResultsPatch,
   }),
   notes: z.string(),
   warnings: z.array(z.string()).default([]),
@@ -55,12 +66,12 @@ const EmitParsedRule = z.object({
 
 /**
  * Turns a free-text merchandising instruction ("boost all red wines at
- * night", "always show whiskey when someone searches bourbon") into a
- * structured condition + patch, grounded in this tenant's real category
- * labels so e.g. "red wines" maps to whatever soft-category string this
- * store actually uses. Never throws — callers get a rejected promise with a
- * readable message instead, since this is a synchronous user-facing action
- * (unlike the hook, there's no "fall back to control" here).
+ * night", "always show whiskey when someone searches bourbon", "pin these
+ * three watches on 'venu'") into a structured condition + patch, grounded in
+ * this tenant's real category labels and, for pin requests, real product
+ * ids looked up by name. Never throws — callers get a rejected promise with
+ * a readable message instead, since this is a synchronous user-facing
+ * action (unlike the hook, there's no "fall back to control" here).
  */
 export async function parseRuleText(tenant: Tenant, text: string): Promise<ParsedRuleDraft> {
   const labels = await getTenantLabels(tenant);
@@ -70,6 +81,24 @@ export async function parseRuleText(tenant: Tenant, text: string): Promise<Parse
     name: "rule-parser",
     version: "1.0.0",
     tools: [
+      tool(
+        "search_products",
+        "Search this store's real product catalog by name to find the actual product id(s) needed for a pinning instruction. Call this whenever the merchant names specific products to pin — never invent or guess a product id.",
+        { query: z.string().min(1), limit: z.number().int().min(1).max(20).default(8) },
+        async ({ query: q, limit }) => {
+          const db = await tenantDb(tenant.dbName);
+          const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+          const products = await db
+            .collection("products")
+            .find({ name: rx, hidden: { $ne: true } })
+            .project({ id: 1, name: 1, price: 1 })
+            .limit(limit)
+            .toArray();
+          return {
+            content: [{ type: "text", text: JSON.stringify(products.map((p) => ({ id: p.id, name: p.name, price: p.price }))) }],
+          };
+        }
+      ),
       tool(
         "emit_parsed_rule",
         "Call this exactly once with the structured rule you parsed from the merchant's sentence.",
@@ -89,23 +118,26 @@ export async function parseRuleText(tenant: Tenant, text: string): Promise<Parse
 A rule has a CONDITION (when it applies) and a PATCH (what it does):
 - condition.mode "all" = applies to every search; "queryMatch" = only when the search query contains/equals one of condition.patterns.
 - condition.timeWindow = optional hour range (0-23, e.g. startHour:22, endHour:6 means 22:00-06:00, wrapping past midnight). Include this ONLY if the instruction mentions a time of day / night / hours.
-- patch.softCategoriesBoost = { "<soft category label>": <positive number, higher = more boost } — use for "boost X" instructions about a whole category. You MUST use one of this store's ACTUAL soft-category labels listed below, not the merchant's casual phrase — pick the closest real match.
-- patch.categoryAssociation = { softCategories: [...], categories: [...], limit } — use for "also show Y when someone searches X" cross-category association instructions. Requires condition.mode "queryMatch" with the trigger query in patterns.
-- patch.productBoosts / profileBoostMultiplier = only if the instruction is clearly about specific products or personalization strength.
+
+Choosing the right patch field matters — they are NOT interchangeable:
+- patch.pinnedResults = [{query, productIds, enabled}] — use when the merchant names SPECIFIC, ENUMERABLE products (by name, SKU, or "these N items") to force into fixed positions on a specific query. Call search_products first to look up each named product's real id — never invent an id. Do not use this for "pin all of category X" — that's an open-ended, changing set; use softCategoriesBoost instead so new matching products are automatically included.
+- patch.softCategoriesBoost = { "<soft category label>": <positive number, higher = more boost> } — use for "boost/prioritize/always show first" instructions about a whole category or product line (not a fixed list of specific items). You MUST use one of this store's ACTUAL soft-category labels listed below, not the merchant's casual phrase — pick the closest real match. A very high value (e.g. 100+) makes the category dominate its own matching query.
+- patch.categoryAssociation = { softCategories: [...], categories: [...], limit } — use for "also show Y when someone searches X" cross-category association instructions, where Y is a DIFFERENT category than what the query would normally match. Requires condition.mode "queryMatch" with the trigger query in patterns.
+- patch.productBoosts / profileBoostMultiplier = only if the instruction is clearly about specific products' boost score, or personalization strength.
 
 This store's real soft-category labels: ${JSON.stringify(labels.softCategories)}
 This store's real (hard) category labels: ${JSON.stringify(labels.categories)}
 
-If the instruction references a concept with no close match in those lists, still produce your best-guess condition/patch but add a clear warning string explaining the mismatch (e.g. "no soft-category label resembling 'red wine' found — used closest match X, please verify").
+If the instruction references a concept with no close match in those lists, or names a product you can't find via search_products, still produce your best-guess condition/patch but add a clear warning string explaining the mismatch.
 
-Call emit_parsed_rule exactly once with your result, then stop.`;
+Call emit_parsed_rule exactly once with your final result, then stop.`;
 
   const stream = query({
     prompt: `Merchant instruction: "${text}"`,
     options: {
       systemPrompt,
       model: "claude-fable-5",
-      maxTurns: 3,
+      maxTurns: 8,
       allowedTools: ["mcp__rule-parser"],
       mcpServers: { "rule-parser": mcpServer },
     },
