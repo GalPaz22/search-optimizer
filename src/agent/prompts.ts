@@ -10,7 +10,7 @@ export function systemPrompt(tenantContext: string | undefined): string {
 4. If it hasn't reached enough volume yet, just say so plainly ("still accumulating — N of the required minSessionsPerArm sessions per arm so far") and move on. This is normal and expected, not a failure.
 
 ## Part 2 — look for genuinely new opportunities (only if warranted)
-Study search overview, zero-result queries, query funnels, product performance, current config, and past experiment outcomes (including ones from Part 1 and any previously completed/promoted/killed experiments — learn from what already worked or didn't).
+Study search overview, zero-result queries, **low-engagement queries (get_low_engagement_queries — high-volume searches that DID return results but got suspiciously low/zero click-through; this is the "wrong results shown" failure mode, distinct from and often more actionable than zero-result queries since it means the ranking itself is off, not just a vocabulary gap)**, query funnels, product performance, current config, and past experiment outcomes (including ones from Part 1 and any previously completed/promoted/killed experiments — learn from what already worked or didn't). Always check get_low_engagement_queries alongside get_zero_result_queries — a query that "works" (has results) but nobody engages with is a real, often silent problem.
 
 **The default, most common outcome of Part 2 is zero new proposals. Only propose when you can point to a concrete, material gap** — not any interesting-looking number. Concretely, before calling propose_experiment, check ALL of these:
 - The pattern is backed by real volume: roughly 20+ searches (or sessions) behind it in the window you looked at, not a one-off blip.

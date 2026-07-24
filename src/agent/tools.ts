@@ -58,6 +58,56 @@ export function buildAnalyticsServer(tenant: Tenant, agentRunId: string) {
       ),
 
       tool(
+        "get_low_engagement_queries",
+        "High-volume queries that DID return results but got suspiciously low or zero click-through — the 'wrong results' failure mode, distinct from zero-result queries (which have their own tool). Surfaces queries worth investigating with get_product_performance to see what's actually being shown.",
+        {
+          days: z.number().int().min(1).max(90).default(30),
+          minSearches: z.number().int().min(1).default(15),
+          limit: z.number().int().max(50).default(25),
+        },
+        async ({ days: d, minSearches, limit }) => {
+          const db = await tenantDb(tenant.dbName);
+          const since = days(d);
+
+          const [searchCounts, clickCounts, zeroResultQueries] = await Promise.all([
+            db
+              .collection("queries")
+              .aggregate([
+                { $match: { timestamp: { $gte: since } } },
+                { $group: { _id: { $toLower: "$query" }, searches: { $sum: 1 } } },
+              ])
+              .toArray(),
+            db
+              .collection("product_clicks")
+              .aggregate([
+                { $match: { timestamp: { $gte: since }, search_query: { $exists: true, $ne: null } } },
+                { $group: { _id: { $toLower: "$search_query" }, clicks: { $sum: 1 } } },
+              ])
+              .toArray(),
+            db.collection("zero_searches").distinct("query", { last_seen: { $gte: since } }),
+          ]);
+
+          const clicksByQuery = new Map(clickCounts.map((c: any) => [c._id, c.clicks]));
+          const zeroResultSet = new Set(zeroResultQueries.map((q: string) => (q || "").toLowerCase()));
+
+          const totalSearches = searchCounts.reduce((s, c: any) => s + c.searches, 0);
+          const totalClicks = clickCounts.reduce((s, c: any) => s + c.clicks, 0);
+          const baselineCtr = totalSearches > 0 ? totalClicks / totalSearches : 0;
+
+          const rows = searchCounts
+            .filter((c: any) => c._id && c.searches >= minSearches && !zeroResultSet.has(c._id))
+            .map((c: any) => {
+              const clicks = clicksByQuery.get(c._id) ?? 0;
+              return { query: c._id, searches: c.searches, clicks, ctr: clicks / c.searches };
+            })
+            .sort((a, b) => a.ctr - b.ctr || b.searches - a.searches)
+            .slice(0, limit);
+
+          return asJson({ baselineCtr, minSearchesThreshold: minSearches, queries: rows });
+        }
+      ),
+
+      tool(
         "get_query_funnel",
         "Funnel (searches → clicks → add-to-cart → orders + revenue) for queries containing a pattern, joined by session.",
         { pattern: z.string().min(1), days: z.number().int().min(1).max(90).default(30) },
