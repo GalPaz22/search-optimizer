@@ -1,4 +1,5 @@
 import { controlDb, getRedis } from "../core/db.js";
+import { siblingApiKeys } from "../core/tenant.js";
 import { ActiveExperimentWire, ExperimentDoc } from "../core/types.js";
 
 export const ACTIVE_KEY = (apiKey: string) => `experiments:active:${apiKey}`;
@@ -14,25 +15,30 @@ export function toWire(exp: ExperimentDoc): ActiveExperimentWire {
   };
 }
 
-/** Rewrites experiments:active:{apiKey} in Redis from Mongo truth. */
+/**
+ * Rewrites experiments:active:{apiKey} in Redis from Mongo truth — under every
+ * apiKey of the tenant (a store may have separate search/tracking keys, and the
+ * dashboard-server hook reads under the key the search request authenticated
+ * with), with the running set unioned across those keys.
+ */
 export async function publishActiveExperiments(apiKey: string): Promise<void> {
   const redis = await getRedis();
   if (!redis) {
     console.warn("[publisher] Redis unavailable; hook will serve control");
     return;
   }
+  const keys = await siblingApiKeys(apiKey);
   const db = await controlDb();
   const running = (await db
     .collection("experiments")
-    .find({ tenantApiKey: apiKey, status: "running" })
+    .find({ tenantApiKey: { $in: keys }, status: "running" })
     .toArray()) as unknown as ExperimentDoc[];
 
-  const key = ACTIVE_KEY(apiKey);
-  if (running.length === 0) {
-    await redis.del(key);
-    return;
+  const payload = running.length > 0 ? JSON.stringify(running.map(toWire)) : null;
+  for (const k of keys) {
+    if (payload) await redis.set(ACTIVE_KEY(k), payload, { EX: ACTIVE_TTL_SECONDS });
+    else await redis.del(ACTIVE_KEY(k));
   }
-  await redis.set(key, JSON.stringify(running.map(toWire)), { EX: ACTIVE_TTL_SECONDS });
 }
 
 /** Cron target: refresh keys for every tenant with running experiments. */

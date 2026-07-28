@@ -25,6 +25,27 @@ export async function listTenants(): Promise<Tenant[]> {
   }));
 }
 
+/**
+ * All user apiKeys that resolve to the same tenant dbName as the given key.
+ * A store can have several user docs (e.g. separate search and tracking keys,
+ * as manoVino does); dashboard-server's hook reads Redis under whichever key
+ * the request authenticated with, so published state must exist under all of
+ * them. Falls back to [apiKey] when the user doc is missing.
+ */
+export async function siblingApiKeys(apiKey: string): Promise<string[]> {
+  const db = await coreUsersDb();
+  const me: any = await db.collection("users").findOne({ apiKey }, { projection: { dbName: 1 } });
+  if (!me?.dbName) return [apiKey];
+  const docs = await db
+    .collection("users")
+    .find({ dbName: me.dbName, apiKey: { $exists: true } })
+    .project({ apiKey: 1 })
+    .toArray();
+  const keys = new Set<string>(docs.map((d: any) => d.apiKey).filter(Boolean));
+  keys.add(apiKey);
+  return [...keys];
+}
+
 export async function getTenantByApiKey(apiKey: string): Promise<Tenant | null> {
   const db = await coreUsersDb();
   const d: any = await db.collection("users").findOne({ apiKey });
