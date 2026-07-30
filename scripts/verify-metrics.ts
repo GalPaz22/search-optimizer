@@ -3,6 +3,7 @@
 import assert from "node:assert";
 import { getMongo, tenantDb, controlDb, ensureTenantExperimentIndexes } from "../src/core/db.js";
 import { aggregateExperiment } from "../src/metrics/aggregate.js";
+import { probVariantBeatsControlRps } from "../src/metrics/stats.js";
 import { ExperimentDoc } from "../src/core/types.js";
 
 const DB = "so_metrics_test_db";
@@ -105,6 +106,12 @@ assert.ok(snap.stats && snap.stats.probBestConv! > 0 && snap.stats.probBestConv!
 assert.ok(
   snap.stats!.probBestClick! > 0 && snap.stats!.probBestClick! <= 1,
   "click-based P(win) must be computed so experiments stay decidable without order data"
+);
+assert.ok(snap.stats!.probBestRps != null, "revenue exists in this fixture, so rev/session P(win) is computable");
+assert.equal(
+  probVariantBeatsControlRps([0, 0, 0], [0, 0]),
+  null,
+  "no revenue in either arm must report no signal, not a spurious 100% for the variant"
 );
 assert.equal(snap.contaminationRate, 0);
 

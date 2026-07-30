@@ -76,12 +76,24 @@ export function probVariantBeatsControlConv(
   return wins / draws;
 }
 
-/** Bootstrap P(mean(variant revenue/session) ≥ mean(control)). Inputs are per-session revenue arrays. */
+/**
+ * Bootstrap P(mean(variant revenue/session) > mean(control)). Inputs are
+ * per-session revenue arrays. Returns null when there is no revenue signal at
+ * all — with every value 0 the old `>=` comparison tied on every draw and
+ * reported a confident-looking 100% for the variant, which reads as "promote
+ * me" on tenants that simply have no order tracking. Ties count as half a win
+ * so sparse revenue doesn't systematically inflate the variant either.
+ */
 export function probVariantBeatsControlRps(control: number[], variant: number[], draws = 2000): number | null {
   if (control.length === 0 || variant.length === 0) return null;
+  const anyRevenue = control.some((v) => v > 0) || variant.some((v) => v > 0);
+  if (!anyRevenue) return null;
   let wins = 0;
   for (let i = 0; i < draws; i++) {
-    if (bootstrapMean(variant) >= bootstrapMean(control)) wins++;
+    const mv = bootstrapMean(variant);
+    const mc = bootstrapMean(control);
+    if (mv > mc) wins += 1;
+    else if (mv === mc) wins += 0.5;
   }
   return wins / draws;
 }
