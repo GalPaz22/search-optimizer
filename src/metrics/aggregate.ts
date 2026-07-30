@@ -9,6 +9,23 @@ interface ExposureRow {
 }
 
 /**
+ * "timestamp at or after `from`", tolerant of the type inconsistency across
+ * tenant collections: `queries` / `product_clicks` / `experiment_exposures`
+ * store `timestamp` as a BSON date, while `cart` / `checkout_events` store an
+ * ISO-8601 string. Mongo never matches a Date bound against a string value, so
+ * a plain `{$gte: from}` silently counted zero add-to-carts and zero orders for
+ * every experiment. $convert coerces both shapes; unparseable/missing values
+ * become null, which sorts below any date and is therefore excluded.
+ */
+function timestampAtOrAfter(from: Date) {
+  return {
+    $expr: {
+      $gte: [{ $convert: { input: "$timestamp", to: "date", onError: null, onNull: null } }, from],
+    },
+  };
+}
+
+/**
  * Per-arm funnel for one experiment, joined on session_id over the tenant's
  * queries / product_clicks / cart / checkout_events, unified via session_aliases.
  * First-exposure attribution: a session belongs to the arm of its first
@@ -67,18 +84,18 @@ export async function aggregateExperiment(exp: ExperimentDoc): Promise<MetricsSn
 
   for (const [armKey, { sessions, ids }] of arms) {
     const sessionMatch = { $in: ids };
-    const timeMatch = { $gte: startedAt };
+    const timeMatch = timestampAtOrAfter(startedAt);
 
     const [searches, clicks, atcAgg, orderDocs] = await Promise.all([
       db.collection("queries").countDocuments({
         $or: [{ session_id: sessionMatch }, { sessionId: sessionMatch }],
-        timestamp: timeMatch,
+        ...timeMatch,
       }),
-      db.collection("product_clicks").countDocuments({ session_id: sessionMatch, timestamp: timeMatch }),
+      db.collection("product_clicks").countDocuments({ session_id: sessionMatch, ...timeMatch }),
       db
         .collection("cart")
         .aggregate([
-          { $match: { session_id: sessionMatch, timestamp: timeMatch } },
+          { $match: { session_id: sessionMatch, ...timeMatch } },
           { $group: { _id: "$session_id" } },
         ])
         .toArray(),
@@ -86,7 +103,7 @@ export async function aggregateExperiment(exp: ExperimentDoc): Promise<MetricsSn
         .collection("checkout_events")
         .find({
           $or: [{ session_id: sessionMatch }, { "orderData.session_id": sessionMatch }],
-          timestamp: timeMatch,
+          ...timeMatch,
         })
         .project({ session_id: 1, "orderData.total_price": 1, "orderData.total": 1, total_price: 1, total: 1 })
         .toArray(),

@@ -61,14 +61,18 @@ await db.collection("product_clicks").insertMany([
   { product_id: "p", session_id: "v1s", timestamp: later },
   { product_id: "p", session_id: "v2s", timestamp: later },
 ]);
+// Production tenants store cart/checkout_events `timestamp` as an ISO string
+// while queries/product_clicks use a BSON date — mirrored here (one Date in the
+// mix) so the aggregator stays type-tolerant. A Date-only bound silently
+// matched nothing here, reporting 0 add-to-carts and 0 orders forever.
 await db.collection("cart").insertMany([
-  { session_id: "c1", timestamp: later },
+  { session_id: "c1", timestamp: later.toISOString() },
   { session_id: "v1s", timestamp: later },
 ]);
 await db.collection("checkout_events").insertMany([
-  { session_id: "c1", timestamp: later, orderData: { total_price: "100" } },
-  { session_id: "v1s", timestamp: later, orderData: { total_price: "50" } },
-  { session_id: "v1s", timestamp: later, orderData: { total_price: "30" } },
+  { session_id: "c1", timestamp: later.toISOString(), orderData: { total_price: "100" } },
+  { session_id: "v1s", timestamp: later.toISOString(), orderData: { total_price: "50" } },
+  { session_id: "v1s", timestamp: later.toISOString(), orderData: { total_price: "30" } },
 ]);
 
 const exp = (await cdb.collection("experiments").findOne({ _id: insertedId })) as unknown as ExperimentDoc;
