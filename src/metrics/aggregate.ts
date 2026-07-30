@@ -86,12 +86,19 @@ export async function aggregateExperiment(exp: ExperimentDoc): Promise<MetricsSn
     const sessionMatch = { $in: ids };
     const timeMatch = timestampAtOrAfter(startedAt);
 
-    const [searches, clicks, atcAgg, orderDocs] = await Promise.all([
+    const [searches, clicks, clickAgg, atcAgg, orderDocs] = await Promise.all([
       db.collection("queries").countDocuments({
         $or: [{ session_id: sessionMatch }, { sessionId: sessionMatch }],
         ...timeMatch,
       }),
       db.collection("product_clicks").countDocuments({ session_id: sessionMatch, ...timeMatch }),
+      db
+        .collection("product_clicks")
+        .aggregate([
+          { $match: { session_id: sessionMatch, ...timeMatch } },
+          { $group: { _id: "$session_id" } },
+        ])
+        .toArray(),
       db
         .collection("cart")
         .aggregate([
@@ -132,6 +139,8 @@ export async function aggregateExperiment(exp: ExperimentDoc): Promise<MetricsSn
       searches,
       clicks,
       ctr: searches > 0 ? clicks / searches : 0,
+      clickSessions: clickAgg.length,
+      clickRate: n > 0 ? clickAgg.length / n : 0,
       atcSessions: atcAgg.length,
       atcRate: n > 0 ? atcAgg.length / n : 0,
       orders: orderSessions.size,
@@ -146,6 +155,15 @@ export async function aggregateExperiment(exp: ExperimentDoc): Promise<MetricsSn
   let stats: MetricsSnapshot["stats"];
   if (control && variant && control.sessions > 0 && variant.sessions > 0) {
     const { z, p } = twoProportionZ(control.orders, control.sessions, variant.orders, variant.sessions);
+    // Same Beta-Bernoulli / z machinery applied to "session clicked at least
+    // once": for tenants with no order tracking this is the only signal that
+    // can separate the arms, and for ranking changes it is the most direct one.
+    const click = twoProportionZ(
+      control.clickSessions,
+      control.sessions,
+      variant.clickSessions,
+      variant.sessions
+    );
     stats = {
       zConv: z,
       pConv: p,
@@ -153,6 +171,14 @@ export async function aggregateExperiment(exp: ExperimentDoc): Promise<MetricsSn
       probBestRps: probVariantBeatsControlRps(
         revenueBySessionByArm.get(control.arm) ?? [],
         revenueBySessionByArm.get(variant.arm) ?? []
+      ),
+      zClick: click.z,
+      pClick: click.p,
+      probBestClick: probVariantBeatsControlConv(
+        control.clickSessions,
+        control.sessions,
+        variant.clickSessions,
+        variant.sessions
       ),
     };
   }

@@ -268,6 +268,10 @@ function ExperimentDetail({ id, onBack }: { id: string; onBack: () => void }) {
           <div className="card">
             <div className="row" style={{ gap: 12 }}>
               <div className="stat">
+                <div className="v">{pct(latest.stats?.probBestClick)}</div>
+                <div className="l">P(variant wins clicks)</div>
+              </div>
+              <div className="stat">
                 <div className="v">{pct(latest.stats?.probBestConv)}</div>
                 <div className="l">P(variant wins conv)</div>
               </div>
@@ -296,6 +300,7 @@ function ExperimentDetail({ id, onBack }: { id: string; onBack: () => void }) {
                 <th>Searches</th>
                 <th>Clicks</th>
                 <th>CTR</th>
+                <th>Click rate</th>
                 <th>ATC rate</th>
                 <th>Orders</th>
                 <th>CVR</th>
@@ -311,6 +316,7 @@ function ExperimentDetail({ id, onBack }: { id: string; onBack: () => void }) {
                   <td>{num(a.searches)}</td>
                   <td>{num(a.clicks)}</td>
                   <td>{pct(a.ctr)}</td>
+                  <td>{pct(a.clickRate)}</td>
                   <td>{pct(a.atcRate)}</td>
                   <td>{num(a.orders)}</td>
                   <td>{pct(a.cvr, 2)}</td>
@@ -322,7 +328,8 @@ function ExperimentDetail({ id, onBack }: { id: string; onBack: () => void }) {
           </table>
           {control && variant && (
             <div className="muted" style={{ marginTop: 8 }}>
-              Lift: CVR {pct(control.cvr > 0 ? variant.cvr / control.cvr - 1 : null)} · rev/session{" "}
+              Lift: click rate {pct(control.clickRate > 0 ? variant.clickRate / control.clickRate - 1 : null)} · CVR{" "}
+              {pct(control.cvr > 0 ? variant.cvr / control.cvr - 1 : null)} · rev/session{" "}
               {pct(control.revenuePerSession > 0 ? variant.revenuePerSession / control.revenuePerSession - 1 : null)}
             </div>
           )}

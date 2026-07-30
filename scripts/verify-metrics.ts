@@ -84,6 +84,8 @@ const v1 = snap.arms.find((a) => a.arm === "v1")!;
 assert.equal(control.sessions, 3);
 assert.equal(control.searches, 4);
 assert.equal(control.clicks, 2);
+assert.equal(control.clickSessions, 2, "c1 and c2 each clicked once");
+assert.ok(Math.abs(control.clickRate - 2 / 3) < 1e-9);
 assert.equal(control.atcSessions, 1);
 assert.equal(control.orders, 1);
 assert.equal(control.revenue, 100);
@@ -92,12 +94,18 @@ assert.ok(Math.abs(control.revenuePerSession - 100 / 3) < 1e-9);
 assert.equal(v1.sessions, 2);
 assert.equal(v1.searches, 2);
 assert.equal(v1.clicks, 3);
+assert.equal(v1.clickSessions, 2, "v1s clicked twice + v2s once = 2 clicking sessions");
+assert.equal(v1.clickRate, 1);
 assert.equal(v1.atcSessions, 1);
 assert.equal(v1.orders, 1, "two orders in one session = 1 converting session");
 assert.equal(v1.revenue, 80);
 assert.equal(v1.revenuePerSession, 40);
 
 assert.ok(snap.stats && snap.stats.probBestConv! > 0 && snap.stats.probBestConv! < 1);
+assert.ok(
+  snap.stats!.probBestClick! > 0 && snap.stats!.probBestClick! <= 1,
+  "click-based P(win) must be computed so experiments stay decidable without order data"
+);
 assert.equal(snap.contaminationRate, 0);
 
 console.log("METRICS-VERIFY-OK");

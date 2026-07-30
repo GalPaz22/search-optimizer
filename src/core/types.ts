@@ -166,6 +166,11 @@ export interface ArmMetrics {
   searches: number;
   clicks: number;
   ctr: number;
+  /** Sessions with >=1 click. Unlike `ctr` (clicks/searches, which can exceed
+   * 100%), this is a Bernoulli proportion over sessions, so it is the click
+   * figure the significance tests can legitimately use. */
+  clickSessions: number;
+  clickRate: number;
   atcSessions: number;
   atcRate: number;
   orders: number;
@@ -184,6 +189,11 @@ export interface MetricsSnapshot {
     pConv: number | null;
     probBestConv: number | null;
     probBestRps: number | null;
+    // Click-based readout, so ranking experiments stay decidable on tenants
+    // that have no order/revenue tracking wired up.
+    zClick: number | null;
+    pClick: number | null;
+    probBestClick: number | null;
   };
 }
 
