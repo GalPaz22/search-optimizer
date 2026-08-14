@@ -68,6 +68,7 @@ export async function ensureIndexes(): Promise<void> {
   await db.collection("experiment_metrics").createIndex({ experimentId: 1, asOf: -1 });
   await db.collection("agent_runs").createIndex({ tenantApiKey: 1, startedAt: -1 });
   await db.collection("rules").createIndex({ tenantApiKey: 1, status: 1 });
+  await db.collection("catalog_change_audits").createIndex({ tenantApiKey: 1, appliedAt: -1 });
 }
 
 /** Tenant-side index; called lazily when an experiment starts for that tenant. */

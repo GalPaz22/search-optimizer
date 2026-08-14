@@ -86,45 +86,32 @@ function Proposals({ onOpenExperiment }: { onOpenExperiment: (id: string) => voi
       {data.map((p) => (
         <div className="card" key={p._id}>
           <div className="row spread">
-            <h3>{p.draftExperiment?.name ?? "Untitled"}</h3>
+            <h3>{p.kind === "catalogFilter" ? `Add catalog filter: ${p.catalogChange?.filter}` : p.draftExperiment?.name ?? "Untitled"}</h3>
             <span className="badge pending">pending</span>
           </div>
           <div className="muted">
-            {p.tenantApiKey} · {p.draftExperiment?.type} ·{" "}
-            {p.draftExperiment?.targeting?.mode === "all"
-              ? "all searches"
-              : `queries: ${p.draftExperiment?.targeting?.patterns?.join(", ")}`}{" "}
-            · {p.draftExperiment?.trafficPct}% traffic
+            {p.kind === "catalogFilter"
+              ? `${p.tenantApiKey} · catalog enrichment · ${p.catalogChange?.productIds?.length ?? 0} products · requires approval`
+              : <>{p.tenantApiKey} · {p.draftExperiment?.type} · {p.draftExperiment?.targeting?.mode === "all" ? "all searches" : `queries: ${p.draftExperiment?.targeting?.patterns?.join(", ")}`} · {p.draftExperiment?.trafficPct}% traffic</>}
           </div>
           <p style={{ fontSize: 14 }}>{p.hypothesis}</p>
           <details>
             <summary className="muted" style={{ cursor: "pointer" }}>
-              Evidence & patch
+              {p.kind === "catalogFilter" ? "Evidence & catalog change" : "Evidence & patch"}
             </summary>
             <pre className="evidence">
-              {JSON.stringify({ evidence: p.evidence, arms: p.draftExperiment?.arms }, null, 2)}
+              {JSON.stringify(p.kind === "catalogFilter" ? { evidence: p.evidence, catalogChange: p.catalogChange } : { evidence: p.evidence, arms: p.draftExperiment?.arms }, null, 2)}
             </pre>
           </details>
           <div className="row" style={{ marginTop: 10 }}>
-            <button
-              className="btn primary"
-              disabled={busy === p._id}
-              onClick={() =>
-                act(async () => {
-                  const exp = await api.approveProposal(p._id, true);
-                  if (exp?._id) onOpenExperiment(exp._id);
-                }, p._id)
-              }
-            >
-              Approve & start
-            </button>
-            <button
-              className="btn"
-              disabled={busy === p._id}
-              onClick={() => act(() => api.approveProposal(p._id, false), p._id)}
-            >
-              Approve only
-            </button>
+            {p.kind === "catalogFilter" ? (
+              <button className="btn primary" disabled={busy === p._id} onClick={() => act(() => api.approveProposal(p._id, false), p._id)}>
+                Approve & apply to catalog
+              </button>
+            ) : <>
+              <button className="btn primary" disabled={busy === p._id} onClick={() => act(async () => { const exp = await api.approveProposal(p._id, true); if (exp?._id) onOpenExperiment(exp._id); }, p._id)}>Approve & start</button>
+              <button className="btn" disabled={busy === p._id} onClick={() => act(() => api.approveProposal(p._id, false), p._id)}>Approve only</button>
+            </>}
             <button
               className="btn danger"
               disabled={busy === p._id}

@@ -119,6 +119,7 @@ export const ProposalStatus = z.enum(["pending", "approved", "rejected", "expire
 
 export interface ProposalDoc {
   _id?: any;
+  kind?: "experiment";
   tenantApiKey: string;
   hypothesis: string;
   evidence: Record<string, unknown>;
@@ -126,6 +127,29 @@ export interface ProposalDoc {
   agentRunId?: string;
   status: z.infer<typeof ProposalStatus>;
   reviewerNotes?: string;
+  createdAt: Date;
+  expiresAt: Date;
+}
+
+// Catalog enrichment is deliberately separate from experiments: changing a
+// product document is global state and would contaminate an A/B control arm.
+export const CatalogFilterChange = z.object({
+  filter: z.string().trim().min(2).max(80),
+  productIds: z.array(z.string().min(1)).min(1).max(500),
+  rationale: z.string().min(20),
+});
+export type CatalogFilterChange = z.infer<typeof CatalogFilterChange>;
+
+export interface CatalogFilterProposalDoc {
+  _id?: any;
+  kind: "catalogFilter";
+  tenantApiKey: string;
+  dbName: string;
+  hypothesis: string;
+  evidence: Record<string, unknown>;
+  catalogChange: CatalogFilterChange;
+  agentRunId?: string;
+  status: z.infer<typeof ProposalStatus>;
   createdAt: Date;
   expiresAt: Date;
 }

@@ -14,12 +14,13 @@ export async function listTenants(): Promise<Tenant[]> {
   const docs = await db
     .collection("users")
     .find({ apiKey: { $exists: true }, dbName: { $exists: true } })
-    .project({ apiKey: 1, dbName: 1, context: 1, "credentials.softCategoriesBoosted": 1, "credentials.pinnedResults": 1 })
+    .project({ apiKey: 1, dbName: 1, context: 1, "credentials.softCategories": 1, "credentials.softCategoriesBoosted": 1, "credentials.pinnedResults": 1 })
     .toArray();
   return docs.map((d: any) => ({
     apiKey: d.apiKey,
     dbName: d.dbName,
     context: d.context,
+    softCategories: d.credentials?.softCategories,
     softCategoriesBoosted: d.credentials?.softCategoriesBoosted,
     pinnedResults: d.credentials?.pinnedResults,
   }));
@@ -54,6 +55,7 @@ export async function getTenantByApiKey(apiKey: string): Promise<Tenant | null> 
     apiKey: d.apiKey,
     dbName: d.dbName,
     context: d.context,
+    softCategories: d.credentials?.softCategories,
     softCategoriesBoosted: d.credentials?.softCategoriesBoosted,
     pinnedResults: d.credentials?.pinnedResults,
   };
