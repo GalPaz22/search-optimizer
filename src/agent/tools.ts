@@ -1,5 +1,6 @@
 import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import { ObjectId } from "mongodb";
 import { controlDb, tenantDb } from "../core/db.js";
 import { ExperimentInput } from "../core/types.js";
 import { assertNoConflict } from "../engine/experiments.js";
@@ -194,6 +195,72 @@ export function buildAnalyticsServer(tenant: Tenant, agentRunId: string) {
               .toArray(),
           ]);
           return asJson({ delivered, clicked });
+        }
+      ),
+
+      tool(
+        "get_catalog_filter_coverage",
+        "Inspect the real product catalog's category/filter coverage and find products with missing soft-category tags. Use this before proposing a new catalog filter.",
+        { sampleLimit: z.number().int().min(1).max(50).default(20) },
+        async ({ sampleLimit }) => {
+          const db = await tenantDb(tenant.dbName);
+          const products = db.collection("products");
+          const [total, hidden, softCategories, categories, missing, pending] = await Promise.all([
+            products.countDocuments({}),
+            products.countDocuments({ hidden: true }),
+            products.distinct("softCategory"),
+            products.distinct("category"),
+            products.find({ hidden: { $ne: true }, $or: [{ softCategory: { $exists: false } }, { softCategory: null }, { softCategory: "" }, { softCategory: { $size: 0 } }] })
+              .project({ _id: 1, id: 1, name: 1, category: 1, softCategory: 1 }).limit(sampleLimit).toArray(),
+            (await controlDb()).collection("proposals").find({ tenantApiKey: tenant.apiKey, kind: "catalogFilter", status: "pending" })
+              .project({ "catalogChange.filter": 1, "catalogChange.productIds": 1 }).toArray(),
+          ]);
+          const flat = (values: unknown[]) => [...new Set(values.flat().filter((v): v is string => typeof v === "string" && v.trim().length > 0))];
+          return asJson({ totalProducts: total, visibleProducts: total - hidden, configuredSoftCategories: tenant.softCategories ?? [], catalogSoftCategories: flat(softCategories), categories: flat(categories), untaggedSample: missing, pendingCatalogFilters: pending });
+        }
+      ),
+
+      tool(
+        "search_catalog_for_filter",
+        "Preview concrete visible catalog products that might receive a proposed filter. Returns stable Mongo document ids; only select products clearly supported by their catalog data.",
+        { query: z.string().min(2), limit: z.number().int().min(1).max(100).default(30) },
+        async ({ query: q, limit }) => {
+          const db = await tenantDb(tenant.dbName);
+          const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+          const rows = await db.collection("products").find({
+            hidden: { $ne: true },
+            $or: [{ name: rx }, { description: rx }, { category: rx }, { softCategory: rx }, { type: rx }, { tags: rx }],
+          }).project({ _id: 1, id: 1, name: 1, category: 1, softCategory: 1, type: 1, price: 1 }).limit(limit).toArray();
+          return asJson(rows.map((p: any) => ({ ...p, catalogDocumentId: String(p._id) })));
+        }
+      ),
+
+      tool(
+        "propose_catalog_filter",
+        "Submit a human-reviewed catalog enrichment proposal. This does not change the catalog. Use only Mongo catalogDocumentId values returned by search_catalog_for_filter, and include evidence of customer demand and why every selected product belongs.",
+        {
+          filter: z.string().trim().min(2).max(80),
+          productIds: z.array(z.string().min(1)).min(1).max(500),
+          rationale: z.string().min(20),
+          hypothesis: z.string().min(20),
+          evidence: z.record(z.string(), z.unknown()),
+        },
+        async (input) => {
+          const db = await tenantDb(tenant.dbName);
+          const uniqueIds = [...new Set(input.productIds)];
+          const objectIds = uniqueIds.filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id));
+          const matches = await db.collection("products").find({ _id: { $in: objectIds }, hidden: { $ne: true } }).project({ _id: 1, name: 1 }).toArray();
+          if (matches.length !== uniqueIds.length) return asJson({ error: `Only ${matches.length} of ${uniqueIds.length} product ids are valid visible catalog documents` });
+          const cdb = await controlDb();
+          const duplicate = await cdb.collection("proposals").findOne({ tenantApiKey: tenant.apiKey, kind: "catalogFilter", status: "pending", "catalogChange.filter": { $regex: `^${input.filter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } });
+          if (duplicate) return asJson({ error: "a pending proposal already exists for this filter" });
+          const result = await cdb.collection("proposals").insertOne({
+            kind: "catalogFilter", tenantApiKey: tenant.apiKey, dbName: tenant.dbName,
+            hypothesis: input.hypothesis, evidence: { ...input.evidence, selectedProducts: matches },
+            catalogChange: { filter: input.filter.trim(), productIds: uniqueIds, rationale: input.rationale },
+            agentRunId, status: "pending", createdAt: new Date(), expiresAt: new Date(Date.now() + 7 * 86400_000),
+          });
+          return asJson({ ok: true, proposalId: String(result.insertedId), productCount: matches.length });
         }
       ),
 

@@ -2,7 +2,8 @@ import { FastifyInstance } from "fastify";
 import { ObjectId } from "mongodb";
 import { controlDb } from "../../core/db.js";
 import { createExperiment, transition } from "../../engine/experiments.js";
-import { ProposalDoc } from "../../core/types.js";
+import { CatalogFilterProposalDoc, ProposalDoc } from "../../core/types.js";
+import { applyCatalogFilterChange } from "../../catalog/filters.js";
 
 export async function proposalRoutes(app: FastifyInstance) {
   app.get("/proposals", async (req) => {
@@ -19,8 +20,32 @@ export async function proposalRoutes(app: FastifyInstance) {
     const db = await controlDb();
     const proposal = (await db
       .collection("proposals")
-      .findOne({ _id: new ObjectId(id), status: "pending" })) as ProposalDoc | null;
+      .findOne({ _id: new ObjectId(id), status: "pending" })) as ProposalDoc | CatalogFilterProposalDoc | null;
     if (!proposal) return reply.code(404).send({ error: "pending proposal not found" });
+
+    if (proposal.kind === "catalogFilter") {
+      const lock = await db.collection("proposals").updateOne(
+        { _id: new ObjectId(id), status: "pending" },
+        { $set: { status: "applying", reviewedBy: by, reviewedAt: new Date() } }
+      );
+      if (lock.modifiedCount !== 1) return reply.code(409).send({ error: "proposal is already being applied" });
+      try {
+        const result = await applyCatalogFilterChange({
+          proposalId: id,
+          tenantApiKey: proposal.tenantApiKey,
+          dbName: proposal.dbName,
+          change: proposal.catalogChange,
+          by,
+        });
+        return result;
+      } catch (e) {
+        await db.collection("proposals").updateOne(
+          { _id: new ObjectId(id), status: "applying" },
+          { $set: { status: "pending", applyError: (e as Error).message } }
+        );
+        return reply.code(409).send({ error: (e as Error).message });
+      }
+    }
 
     const exp = await createExperiment({ ...proposal.draftExperiment, proposalId: id }, "approved");
     await db

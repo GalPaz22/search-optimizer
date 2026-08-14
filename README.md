@@ -31,6 +31,8 @@ Crons: Redis active-key refresh every 30s · metrics snapshots hourly · proposa
 3. **Experiments tab** → per-arm funnel, Bayesian P(variant wins) on conversion and revenue/session + z-test p-value, lifecycle buttons (pause / complete / kill / promote).
 4. **Promote** materializes the winning patch into tenant config (`users` **and** `semantix` core dbs — known dashboard-server inconsistency) / product `boost` fields, and busts `store-config:{apiKey}`.
 
+The agent can also propose a **catalog filter enrichment** after inspecting real catalog coverage. These are not experiments: the proposal contains an explicit, previewable product-id set and requires human approval. Approval adds the filter to tenant credentials in both core databases, tags those catalog products, invalidates store-config caches, and records a before-state audit in `catalog_change_audits`.
+
 ## Verification
 
 - `node --test --import tsx test/m1-verify.test.ts` — assignment parity with the dashboard-server hook, 50/50 split, traffic %, control fallback, patch composition.
