@@ -1,64 +1,392 @@
-import { useEffect, useState, useCallback } from "react";
+import {
+  useEffect,
+  useState,
+  useCallback,
+  createContext,
+  useContext,
+  useRef,
+} from "react";
 import { api } from "./api";
 
-type Tab = "proposals" | "experiments" | "rules" | "agent";
-
+type Tab = "overview" | "proposals" | "experiments" | "rules" | "agent";
+const StoreContext = createContext("");
 const pct = (v: number | null | undefined, digits = 1) =>
   v == null ? "—" : `${(v * 100).toFixed(digits)}%`;
-const num = (v: number | null | undefined) => (v == null ? "—" : v.toLocaleString());
+const num = (v: number | null | undefined) =>
+  v == null ? "—" : v.toLocaleString();
+const labels: Record<Tab, string> = {
+  overview: "Overview",
+  proposals: "Opportunities",
+  experiments: "Experiments",
+  agent: "Activity",
+  rules: "Merchandising",
+};
+const captions: Record<Tab, string> = {
+  overview: "A clear view of your next search improvements.",
+  proposals: "Review the evidence. Decide what to test next.",
+  experiments: "Understand what changes, and whether it works.",
+  agent: "Run an analysis and explore the optimizer’s recent work.",
+  rules: "Manage the rules that shape your search results.",
+};
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("proposals");
+  const [tab, setTab] = useState<Tab>("overview");
   const [selected, setSelected] = useState<string | null>(null);
-
+  const [store, setStore] = useState("");
+  const tenants = useAsync<any[]>(() => api.tenants());
+  const navigate = (next: Tab) => {
+    setTab(next);
+    setSelected(null);
+  };
   return (
-    <div className="app">
-      <header>
-        <h1>Search Optimizer</h1>
-        <span className="sub">agentic revenue experiments</span>
-      </header>
-      <nav>
-        {(["proposals", "experiments", "rules", "agent"] as Tab[]).map((t) => (
-          <button
-            key={t}
-            className={tab === t && !selected ? "active" : ""}
-            onClick={() => {
-              setTab(t);
-              setSelected(null);
-            }}
-          >
-            {t[0].toUpperCase() + t.slice(1)}
-          </button>
-        ))}
-      </nav>
-      {selected ? (
-        <ExperimentDetail id={selected} onBack={() => setSelected(null)} />
-      ) : tab === "proposals" ? (
-        <Proposals onOpenExperiment={setSelected} />
-      ) : tab === "experiments" ? (
-        <Experiments onOpen={setSelected} />
-      ) : tab === "rules" ? (
-        <Rules />
-      ) : (
-        <AgentPanel />
-      )}
-    </div>
+    <StoreContext.Provider value={store}>
+      <div className="app">
+        <aside className="sidebar">
+          <div className="brand">
+            <span className="brand-mark">↗</span>
+            <div>
+              Search Optimizer<small>SEARCH INTELLIGENCE</small>
+            </div>
+          </div>
+          <div className="nav-caption">WORKSPACE</div>
+          <nav aria-label="Main navigation">
+            {(
+              [
+                "overview",
+                "proposals",
+                "experiments",
+                "agent",
+                "rules",
+              ] as Tab[]
+            ).map((t, i) => (
+              <button
+                key={t}
+                aria-current={tab === t ? "page" : undefined}
+                className={tab === t ? "active" : ""}
+                onClick={() => navigate(t)}
+              >
+                <span aria-hidden="true">{["◫", "◇", "⚗", "↺", "≡"][i]}</span>
+                {labels[t]}
+              </button>
+            ))}
+          </nav>
+          <div className="sidebar-note">
+            <span className="status-dot" />
+            Human-reviewed optimization
+            <p>Every proposal starts with your decision.</p>
+          </div>
+        </aside>
+        <div className="workspace">
+          <header className="topbar">
+            <span>
+              Workspace <span className="muted">/ {labels[tab]}</span>
+            </span>
+            <div className="store-picker">
+              <label htmlFor="store">Store</label>
+              <select
+                id="store"
+                value={store}
+                onChange={(e) => {
+                  setStore(e.target.value);
+                  setSelected(null);
+                }}
+              >
+                <option value="">All stores</option>
+                {tenants.data?.map((t) => (
+                  <option key={t.apiKey} value={t.apiKey}>
+                    {t.dbName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </header>
+          <main>
+            <div className="page-heading">
+              <div>
+                <div className="eyebrow">SEARCH PERFORMANCE</div>
+                <h1>{selected ? "Experiment review" : labels[tab]}</h1>
+                <p>
+                  {selected
+                    ? "Review the treatment, evidence, and next decision."
+                    : captions[tab]}
+                </p>
+              </div>
+              <span className="badge">
+                {store
+                  ? (tenants.data?.find((t) => t.apiKey === store)?.dbName ??
+                    "Selected store")
+                  : "All stores"}
+              </span>
+            </div>
+            {tenants.error && (
+              <div className="error" role="alert">
+                Could not load stores: {tenants.error}
+              </div>
+            )}
+            <div key={store}>
+              {selected ? (
+                <ExperimentDetail
+                  id={selected}
+                  onBack={() => setSelected(null)}
+                />
+              ) : tab === "overview" ? (
+                <Overview navigate={navigate} onOpen={setSelected} />
+              ) : tab === "proposals" ? (
+                <Proposals onOpenExperiment={setSelected} />
+              ) : tab === "experiments" ? (
+                <Experiments onOpen={setSelected} />
+              ) : tab === "rules" ? (
+                <Rules />
+              ) : (
+                <AgentPanel />
+              )}
+            </div>
+          </main>
+          <footer>
+            Search Optimizer <span>Evidence first. Better search follows.</span>
+          </footer>
+        </div>
+      </div>
+    </StoreContext.Provider>
   );
 }
 
 function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const generation = useRef(0);
   const reload = useCallback(() => {
+    const current = ++generation.current;
     setError(null);
-    fn().then(setData).catch((e) => setError(e.message));
+    fn()
+      .then((value) => {
+        if (generation.current === current) setData(value);
+      })
+      .catch((e) => {
+        if (generation.current === current) setError(e.message);
+      });
   }, deps);
-  useEffect(reload, [reload]);
+  useEffect(() => {
+    reload();
+    return () => {
+      generation.current++;
+    };
+  }, [reload]);
   return { data, error, reload };
 }
 
-function Proposals({ onOpenExperiment }: { onOpenExperiment: (id: string) => void }) {
-  const { data, error, reload } = useAsync<any[]>(() => api.proposals("pending"));
+function Empty({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="empty">
+      <span className="empty-symbol">◇</span>
+      <h3>{title}</h3>
+      <p>{children}</p>
+    </div>
+  );
+}
+
+function Overview({
+  navigate,
+  onOpen,
+}: {
+  navigate: (t: Tab) => void;
+  onOpen: (id: string) => void;
+}) {
+  const store = useContext(StoreContext);
+  const result = useAsync(
+    () =>
+      Promise.all([
+        api.proposals("pending", store),
+        api.experiments(store ? `?tenant=${encodeURIComponent(store)}` : ""),
+        api.agentRuns(store),
+      ]),
+    [store],
+  );
+  if (result.error)
+    return (
+      <div className="error" role="alert">
+        {result.error}
+        <button className="btn" onClick={result.reload}>
+          Retry
+        </button>
+      </div>
+    );
+  if (!result.data)
+    return (
+      <Empty title="Loading your workspace">
+        Gathering proposals, experiments, and recent analysis…
+      </Empty>
+    );
+  const [proposals, experiments, runs] = result.data;
+  const running = experiments.filter((e: any) => e.status === "running");
+  return (
+    <>
+      <div className="overview-stats">
+        {[
+          [
+            "Awaiting review",
+            proposals.length,
+            "Proposals ready for your decision",
+            "proposals",
+          ],
+          [
+            "Running experiments",
+            running.length,
+            "Changes currently being measured",
+            "experiments",
+          ],
+          [
+            "Promoted experiments",
+            experiments.filter((e: any) => e.status === "promoted").length,
+            "In the returned experiment history",
+            "experiments",
+          ],
+        ].map(([label, value, note, target]) => (
+          <button
+            className="metric-card"
+            key={label}
+            onClick={() => navigate(target as Tab)}
+          >
+            <span>{label}</span>
+            <strong>{value}</strong>
+            <small>
+              {note} <span>↗</span>
+            </small>
+          </button>
+        ))}
+      </div>
+      <div className="section-heading">
+        <h2>Your next decisions</h2>
+        <button className="btn" onClick={() => navigate("proposals")}>
+          View opportunities →
+        </button>
+      </div>
+      {proposals.length ? (
+        proposals.slice(0, 4).map((p: any) => (
+          <button
+            className="decision-row"
+            key={p._id}
+            onClick={() => navigate("proposals")}
+          >
+            <span className="opportunity-icon">◇</span>
+            <div>
+              <strong>
+                {p.draftExperiment?.name ??
+                  `Add filter: ${p.catalogChange?.filter}`}
+              </strong>
+              <p>{p.hypothesis}</p>
+            </div>
+            <span className="badge pending">Review</span>
+          </button>
+        ))
+      ) : (
+        <Empty title="Nothing awaiting review">
+          New proposals appear here after an analysis finds an opportunity worth
+          testing.
+        </Empty>
+      )}
+      <div className="two-column">
+        <section className="card">
+          <div className="section-heading">
+            <h2>In flight</h2>
+            <span className="badge running">{running.length} running</span>
+          </div>
+          {running.length ? (
+            running.slice(0, 5).map((e: any) => (
+              <button
+                className="list-link"
+                key={e._id}
+                onClick={() => onOpen(e._id)}
+              >
+                <strong>{e.name}</strong>
+                <span>{e.trafficPct}% traffic →</span>
+              </button>
+            ))
+          ) : (
+            <p className="muted">
+              Approved experiments will appear here when started.
+            </p>
+          )}
+        </section>
+        <section className="card">
+          <h2>Latest analysis</h2>
+          {runs[0] ? (
+            <>
+              <p className="muted">
+                {new Date(runs[0].startedAt).toLocaleString()} ·{" "}
+                {runs[0].status}
+              </p>
+              <p className="summary-text">
+                {runs[0].summary ||
+                  runs[0].error ||
+                  "No summary available yet."}
+              </p>
+            </>
+          ) : (
+            <p className="muted">
+              Start an analysis to inspect search performance and discover
+              opportunities.
+            </p>
+          )}
+          <button className="btn" onClick={() => navigate("agent")}>
+            Open activity →
+          </button>
+        </section>
+      </div>
+      <p className="muted">
+        Overview uses the latest returned records: up to 100 pending proposals,
+        200 experiments, and 50 analysis runs. Search funnel and tracking health
+        require additional analytics.
+      </p>
+    </>
+  );
+}
+
+function Evidence({ value }: { value: unknown }) {
+  if (value == null) return <span className="muted">Not provided</span>;
+  if (typeof value !== "object") return <span>{String(value)}</span>;
+  if (Array.isArray(value))
+    return (
+      <div className="evidence-list">
+        {value.map((v, i) => (
+          <div key={i}>
+            <Evidence value={v} />
+          </div>
+        ))}
+      </div>
+    );
+  return (
+    <dl className="evidence-grid">
+      {Object.entries(value).map(([key, v]) => (
+        <div key={key}>
+          <dt>{key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ")}</dt>
+          <dd>
+            <Evidence value={v} />
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function Proposals({
+  onOpenExperiment,
+}: {
+  onOpenExperiment: (id: string) => void;
+}) {
+  const store = useContext(StoreContext);
+  const { data, error, reload } = useAsync<any[]>(
+    () => api.proposals("pending", store),
+    [store],
+  );
+  const [review, setReview] = useState<string | null>(null);
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -78,48 +406,181 @@ function Proposals({ onOpenExperiment }: { onOpenExperiment: (id: string) => voi
   if (error) return <div className="error">{error}</div>;
   if (!data) return <div className="muted">Loading…</div>;
   if (data.length === 0)
-    return <div className="muted">No pending proposals. Run the agent from the Agent tab.</div>;
+    return (
+      <Empty title="You’re all caught up">
+        No pending opportunities. Run an analysis from Activity to look for new
+        improvements.
+      </Empty>
+    );
 
   return (
     <>
       {actionError && <div className="error">{actionError}</div>}
       {data.map((p) => (
-        <div className="card" key={p._id}>
+        <div className="card proposal-card" key={p._id}>
           <div className="row spread">
-            <h3>{p.kind === "catalogFilter" ? `Add catalog filter: ${p.catalogChange?.filter}` : p.draftExperiment?.name ?? "Untitled"}</h3>
+            <h3>
+              {p.kind === "catalogFilter"
+                ? `Add catalog filter: ${p.catalogChange?.filter}`
+                : (p.draftExperiment?.name ?? "Untitled")}
+            </h3>
             <span className="badge pending">pending</span>
           </div>
           <div className="muted">
-            {p.kind === "catalogFilter"
-              ? `${p.tenantApiKey} · catalog enrichment · ${p.catalogChange?.productIds?.length ?? 0} products · requires approval`
-              : <>{p.tenantApiKey} · {p.draftExperiment?.type} · {p.draftExperiment?.targeting?.mode === "all" ? "all searches" : `queries: ${p.draftExperiment?.targeting?.patterns?.join(", ")}`} · {p.draftExperiment?.trafficPct}% traffic</>}
+            {p.kind === "catalogFilter" ? (
+              `${p.dbName ?? "Catalog"} · catalog enrichment · ${p.catalogChange?.productIds?.length ?? 0} products · requires approval`
+            ) : (
+              <>
+                {p.draftExperiment?.dbName} · {p.draftExperiment?.type} ·{" "}
+                {p.draftExperiment?.targeting?.mode === "all"
+                  ? "all searches"
+                  : `queries: ${p.draftExperiment?.targeting?.patterns?.join(", ")}`}{" "}
+                · {p.draftExperiment?.trafficPct}% traffic
+              </>
+            )}
           </div>
           <p style={{ fontSize: 14 }}>{p.hypothesis}</p>
-          <details>
-            <summary className="muted" style={{ cursor: "pointer" }}>
-              {p.kind === "catalogFilter" ? "Evidence & catalog change" : "Evidence & patch"}
-            </summary>
-            <pre className="evidence">
-              {JSON.stringify(p.kind === "catalogFilter" ? { evidence: p.evidence, catalogChange: p.catalogChange } : { evidence: p.evidence, arms: p.draftExperiment?.arms }, null, 2)}
-            </pre>
-          </details>
-          <div className="row" style={{ marginTop: 10 }}>
-            {p.kind === "catalogFilter" ? (
-              <button className="btn primary" disabled={busy === p._id} onClick={() => act(() => api.approveProposal(p._id, false), p._id)}>
-                Approve & apply to catalog
-              </button>
-            ) : <>
-              <button className="btn primary" disabled={busy === p._id} onClick={() => act(async () => { const exp = await api.approveProposal(p._id, true); if (exp?._id) onOpenExperiment(exp._id); }, p._id)}>Approve & start</button>
-              <button className="btn" disabled={busy === p._id} onClick={() => act(() => api.approveProposal(p._id, false), p._id)}>Approve only</button>
-            </>}
-            <button
-              className="btn danger"
-              disabled={busy === p._id}
-              onClick={() => act(() => api.rejectProposal(p._id, "rejected from ops UI"), p._id)}
-            >
-              Reject
-            </button>
-          </div>
+          <button
+            className="btn"
+            aria-expanded={review === p._id}
+            onClick={() => {
+              setReview(review === p._id ? null : p._id);
+              setNote("");
+            }}
+          >
+            {review === p._id ? "Close review ↑" : "Review evidence & change →"}
+          </button>
+          {review === p._id && (
+            <div className="proposal-review">
+              <h2>Evidence behind this proposal</h2>
+              <Evidence value={p.evidence} />
+              <h2>What will change</h2>
+              {p.kind === "catalogFilter" ? (
+                <>
+                  <p>{p.catalogChange?.rationale}</p>
+                  <Evidence value={p.catalogChange} />
+                  <p className="muted">
+                    Catalog enrichment applies globally after approval; it is
+                    not an A/B test.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="two-column">
+                    {p.draftExperiment?.arms?.map((arm: any) => (
+                      <div className="treatment" key={arm.key}>
+                        <div className="eyebrow">
+                          {arm.key === "control"
+                            ? "CONTROL · CURRENT BEHAVIOR"
+                            : `VARIANT · ${arm.key}`}
+                        </div>
+                        <p>
+                          {arm.key === "control"
+                            ? "Existing search configuration"
+                            : describePatch(arm.patch)}
+                        </p>
+                        {arm.key !== "control" && (
+                          <Evidence value={arm.patch} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <h2>Test plan</h2>
+                  <div className="plan-grid">
+                    <div>
+                      <label>Targeting</label>
+                      {describeCondition(p.draftExperiment?.targeting)}
+                    </div>
+                    <div>
+                      <label>Enrolled traffic</label>
+                      {p.draftExperiment?.trafficPct}%
+                    </div>
+                    <div>
+                      <label>Minimum sessions per arm</label>
+                      {num(p.draftExperiment?.guardrails?.minSessionsPerArm)}
+                    </div>
+                    <div>
+                      <label>Maximum duration</label>
+                      {p.draftExperiment?.guardrails?.maxDurationDays ??
+                        "—"}{" "}
+                      days
+                    </div>
+                  </div>
+                  <p className="muted">
+                    Configuration preview. Ranked product previews and duration
+                    estimates are not yet available.
+                  </p>
+                </>
+              )}
+              <details>
+                <summary>Technical details</summary>
+                <pre className="evidence">{JSON.stringify(p, null, 2)}</pre>
+              </details>
+              <label htmlFor={`note-${p._id}`}>
+                Rejection reason (optional)
+              </label>
+              <textarea
+                id={`note-${p._id}`}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Explain what should be different next time…"
+                rows={2}
+              />
+              <div className="row" style={{ marginTop: 10 }}>
+                {p.kind === "catalogFilter" ? (
+                  <button
+                    className="btn primary"
+                    disabled={busy === p._id}
+                    onClick={() =>
+                      act(() => api.approveProposal(p._id, false), p._id)
+                    }
+                  >
+                    Approve & apply to catalog
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      className="btn primary"
+                      disabled={busy === p._id}
+                      onClick={() =>
+                        act(async () => {
+                          const exp = await api.approveProposal(p._id, true);
+                          if (exp?._id) onOpenExperiment(exp._id);
+                        }, p._id)
+                      }
+                    >
+                      Approve & start
+                    </button>
+                    <button
+                      className="btn"
+                      disabled={busy === p._id}
+                      onClick={() =>
+                        act(() => api.approveProposal(p._id, false), p._id)
+                      }
+                    >
+                      Approve only
+                    </button>
+                  </>
+                )}
+                <button
+                  className="btn danger"
+                  disabled={busy === p._id}
+                  onClick={() =>
+                    act(
+                      () =>
+                        api.rejectProposal(
+                          p._id,
+                          note.trim() || "rejected from ops UI",
+                        ),
+                      p._id,
+                    )
+                  }
+                >
+                  Reject
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ))}
     </>
@@ -127,41 +588,114 @@ function Proposals({ onOpenExperiment }: { onOpenExperiment: (id: string) => voi
 }
 
 function Experiments({ onOpen }: { onOpen: (id: string) => void }) {
-  const { data, error } = useAsync<any[]>(() => api.experiments());
+  const store = useContext(StoreContext);
+  const [status, setStatus] = useState("all");
+  const [search, setSearch] = useState("");
+  const { data, error } = useAsync<any[]>(
+    () => api.experiments(store ? `?tenant=${encodeURIComponent(store)}` : ""),
+    [store],
+  );
   if (error) return <div className="error">{error}</div>;
   if (!data) return <div className="muted">Loading…</div>;
-  if (data.length === 0) return <div className="muted">No experiments yet.</div>;
+  if (data.length === 0)
+    return <div className="muted">No experiments yet.</div>;
   return (
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Tenant</th>
-          <th>Type</th>
-          <th>Targeting</th>
-          <th>Traffic</th>
-          <th>Status</th>
-          <th>Created</th>
-        </tr>
-      </thead>
-      <tbody>
-        {data.map((e) => (
-          <tr key={e._id} style={{ cursor: "pointer" }} onClick={() => onOpen(e._id)}>
-            <td>{e.name}</td>
-            <td className="muted">{e.dbName}</td>
-            <td>{e.type}</td>
-            <td className="muted">
-              {e.targeting?.mode === "all" ? "all" : e.targeting?.patterns?.join(", ")}
-            </td>
-            <td>{e.trafficPct}%</td>
-            <td>
-              <span className={`badge ${e.status}`}>{e.status}</span>
-            </td>
-            <td className="muted">{new Date(e.createdAt).toLocaleDateString()}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <>
+      <div className="filter-bar">
+        <input
+          aria-label="Search experiments"
+          placeholder="Search experiments…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <select
+          aria-label="Experiment status"
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+        >
+          {[
+            "all",
+            "running",
+            "approved",
+            "paused",
+            "completed",
+            "promoted",
+            "killed",
+            "rejected",
+          ].map((s) => (
+            <option key={s} value={s}>
+              {s === "all" ? "All statuses" : s}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Tenant</th>
+              <th>Type</th>
+              <th>Targeting</th>
+              <th>Traffic</th>
+              <th>Status</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data
+              .filter(
+                (e) =>
+                  (status === "all" || e.status === status) &&
+                  `${e.name} ${e.dbName} ${e.targeting?.patterns?.join(" ")}`
+                    .toLowerCase()
+                    .includes(search.toLowerCase()),
+              )
+              .map((e) => (
+                <tr
+                  key={e._id}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => onOpen(e._id)}
+                >
+                  <td>
+                    <button
+                      className="text-button"
+                      onClick={() => onOpen(e._id)}
+                    >
+                      {e.name} →
+                    </button>
+                  </td>
+                  <td className="muted">{e.dbName}</td>
+                  <td>{e.type}</td>
+                  <td className="muted">
+                    {e.targeting?.mode === "all"
+                      ? "all"
+                      : e.targeting?.patterns?.join(", ")}
+                  </td>
+                  <td>{e.trafficPct}%</td>
+                  <td>
+                    <span className={`badge ${e.status}`}>{e.status}</span>
+                  </td>
+                  <td className="muted">
+                    {new Date(e.createdAt).toLocaleDateString()}
+                  </td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+      {!data.some(
+        (e) =>
+          (status === "all" || e.status === status) &&
+          `${e.name} ${e.dbName} ${e.targeting?.patterns?.join(" ")}`
+            .toLowerCase()
+            .includes(search.toLowerCase()),
+      ) && (
+        <Empty title="No matching experiments">
+          Try another name or status.
+        </Empty>
+      )}
+    </>
   );
 }
 
@@ -211,8 +745,10 @@ function ExperimentDetail({ id, onBack }: { id: string; onBack: () => void }) {
         </div>
         <div className="muted">
           {e.dbName} · {e.type} ·{" "}
-          {e.targeting?.mode === "all" ? "all searches" : `queries: ${e.targeting?.patterns?.join(", ")}`} ·{" "}
-          {e.trafficPct}% traffic · source: {e.source}
+          {e.targeting?.mode === "all"
+            ? "all searches"
+            : `queries: ${e.targeting?.patterns?.join(", ")}`}{" "}
+          · {e.trafficPct}% traffic · source: {e.source}
         </div>
         <p style={{ fontSize: 14 }}>{e.hypothesis}</p>
         {err && <div className="error">{err}</div>}
@@ -250,6 +786,90 @@ function ExperimentDetail({ id, onBack }: { id: string; onBack: () => void }) {
         </div>
       </div>
 
+      {met.error && (
+        <div className="error" role="alert">
+          Metrics could not be loaded: {met.error}
+        </div>
+      )}
+      {latest && (
+        <div className="card">
+          <div className="section-heading">
+            <h2>Sample progress</h2>
+            <span className="badge">
+              {e.arms.every(
+                (arm: any) =>
+                  (latest.arms.find((a: any) => a.arm === arm.key)?.sessions ??
+                    0) >= (e.guardrails?.minSessionsPerArm ?? Infinity),
+              )
+                ? "Minimum sample reached"
+                : "Collecting data"}
+            </span>
+          </div>
+          <p className="muted">
+            Reaching the sample threshold alone does not establish a winner.
+            Review the outcome metrics before deciding.
+          </p>
+          <div className="two-column">
+            {e.arms.map((a: any) => {
+              const sessions =
+                latest.arms.find((m: any) => m.arm === a.key)?.sessions ?? 0;
+              const goal = e.guardrails?.minSessionsPerArm;
+              return (
+                <div key={a.key}>
+                  <div className="row spread">
+                    <strong>{a.key}</strong>
+                    <span className="muted">
+                      {num(sessions)} / {num(goal)} sessions
+                    </span>
+                  </div>
+                  <progress
+                    aria-label={`${a.key} sample progress`}
+                    value={sessions}
+                    max={goal || Math.max(1, sessions)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {control && variant && (
+        <div className="comparison-grid">
+          {[
+            ["Click rate", "clickRate"],
+            ["Conversion", "cvr"],
+            ["Revenue / session", "revenuePerSession"],
+          ].map(([label, key]) => {
+            const lift =
+              control[key] > 0 ? variant[key] / control[key] - 1 : null;
+            return (
+              <div className="card" key={key}>
+                <span className="muted">{label}</span>
+                <h2>
+                  {lift == null ? "—" : `${lift > 0 ? "+" : ""}${pct(lift)}`}{" "}
+                  <small>relative change</small>
+                </h2>
+                <p>
+                  Control{" "}
+                  {key === "revenuePerSession"
+                    ? num(control[key])
+                    : pct(control[key])}{" "}
+                  → {variant.arm}{" "}
+                  {key === "revenuePerSession"
+                    ? num(variant[key])
+                    : pct(variant[key])}
+                </p>
+                <span className="muted">
+                  Absolute change:{" "}
+                  {key === "revenuePerSession"
+                    ? (variant[key] - control[key]).toFixed(2)
+                    : `${((variant[key] - control[key]) * 100).toFixed(2)} percentage points`}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
       {latest ? (
         <>
           <div className="card">
@@ -267,7 +887,9 @@ function ExperimentDetail({ id, onBack }: { id: string; onBack: () => void }) {
                 <div className="l">P(variant wins rev/sess)</div>
               </div>
               <div className="stat">
-                <div className="v">{latest.stats?.pConv?.toFixed(3) ?? "—"}</div>
+                <div className="v">
+                  {latest.stats?.pConv?.toFixed(3) ?? "—"}
+                </div>
                 <div className="l">p-value (conv)</div>
               </div>
               <div className="stat">
@@ -279,57 +901,101 @@ function ExperimentDetail({ id, onBack }: { id: string; onBack: () => void }) {
               as of {new Date(latest.asOf).toLocaleString()}
             </div>
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Arm</th>
-                <th>Sessions</th>
-                <th>Searches</th>
-                <th>Clicks</th>
-                <th>CTR</th>
-                <th>Click rate</th>
-                <th>ATC rate</th>
-                <th>Orders</th>
-                <th>CVR</th>
-                <th>Revenue</th>
-                <th>Rev/session</th>
-              </tr>
-            </thead>
-            <tbody>
-              {latest.arms.map((a: any) => (
-                <tr key={a.arm}>
-                  <td>{a.arm === "control" ? "control" : `${a.arm} (variant)`}</td>
-                  <td>{num(a.sessions)}</td>
-                  <td>{num(a.searches)}</td>
-                  <td>{num(a.clicks)}</td>
-                  <td>{pct(a.ctr)}</td>
-                  <td>{pct(a.clickRate)}</td>
-                  <td>{pct(a.atcRate)}</td>
-                  <td>{num(a.orders)}</td>
-                  <td>{pct(a.cvr, 2)}</td>
-                  <td>{a.revenue?.toFixed(0)}</td>
-                  <td>{a.revenuePerSession?.toFixed(2)}</td>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Arm</th>
+                  <th>Sessions</th>
+                  <th>Searches</th>
+                  <th>Clicks</th>
+                  <th>CTR</th>
+                  <th>Click rate</th>
+                  <th>ATC rate</th>
+                  <th>Orders</th>
+                  <th>CVR</th>
+                  <th>Revenue</th>
+                  <th>Rev/session</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {latest.arms.map((a: any) => (
+                  <tr key={a.arm}>
+                    <td>
+                      {a.arm === "control" ? "control" : `${a.arm} (variant)`}
+                    </td>
+                    <td>{num(a.sessions)}</td>
+                    <td>{num(a.searches)}</td>
+                    <td>{num(a.clicks)}</td>
+                    <td>{pct(a.ctr)}</td>
+                    <td>{pct(a.clickRate)}</td>
+                    <td>{pct(a.atcRate)}</td>
+                    <td>{num(a.orders)}</td>
+                    <td>{pct(a.cvr, 2)}</td>
+                    <td>{a.revenue?.toFixed(0)}</td>
+                    <td>{a.revenuePerSession?.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {control && variant && (
             <div className="muted" style={{ marginTop: 8 }}>
-              Lift: click rate {pct(control.clickRate > 0 ? variant.clickRate / control.clickRate - 1 : null)} · CVR{" "}
-              {pct(control.cvr > 0 ? variant.cvr / control.cvr - 1 : null)} · rev/session{" "}
-              {pct(control.revenuePerSession > 0 ? variant.revenuePerSession / control.revenuePerSession - 1 : null)}
+              Lift: click rate{" "}
+              {pct(
+                control.clickRate > 0
+                  ? variant.clickRate / control.clickRate - 1
+                  : null,
+              )}{" "}
+              · CVR{" "}
+              {pct(control.cvr > 0 ? variant.cvr / control.cvr - 1 : null)} ·
+              rev/session{" "}
+              {pct(
+                control.revenuePerSession > 0
+                  ? variant.revenuePerSession / control.revenuePerSession - 1
+                  : null,
+              )}
             </div>
           )}
         </>
       ) : (
-        <div className="muted">No metrics snapshot yet — use "Recompute now" once traffic flows.</div>
+        <div className="muted">
+          {!met.data && !met.error
+            ? "Loading metrics…"
+            : met.error
+              ? "Metrics are unavailable. Try reloading metrics."
+              : 'No metrics snapshot yet — use "Recompute now" once traffic flows.'}
+        </div>
       )}
 
+      <section className="card" style={{ marginTop: 20 }}>
+        <h2>Experiment changes</h2>
+        {e.arms.map((arm: any) => (
+          <div className="treatment" key={arm.key}>
+            <strong>{arm.key}</strong>
+            <p>
+              {arm.key === "control"
+                ? "Existing search configuration"
+                : describePatch(arm.patch)}
+            </p>
+          </div>
+        ))}
+        <h2>Decision history</h2>
+        {e.statusHistory?.map((h: any, i: number) => (
+          <div className="history-row" key={i}>
+            <span className={`badge ${h.status}`}>{h.status}</span>
+            <span>{new Date(h.at).toLocaleString()}</span>
+            <span>{h.note || h.by || ""}</span>
+          </div>
+        ))}
+      </section>
       <details style={{ marginTop: 16 }}>
         <summary className="muted" style={{ cursor: "pointer" }}>
           Arms & patches / status history
         </summary>
-        <pre className="evidence">{JSON.stringify({ arms: e.arms, history: e.statusHistory }, null, 2)}</pre>
+        <pre className="evidence">
+          {JSON.stringify({ arms: e.arms, history: e.statusHistory }, null, 2)}
+        </pre>
       </details>
     </div>
   );
@@ -337,19 +1003,27 @@ function ExperimentDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
 function AgentPanel() {
   const tenants = useAsync<any[]>(() => api.tenants());
-  const runs = useAsync<any[]>(() => api.agentRuns());
-  const [tenant, setTenant] = useState("");
+  const store = useContext(StoreContext);
+  const runs = useAsync<any[]>(() => api.agentRuns(store), [store]);
+  const [tenant, setTenant] = useState(store);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [spend, setSpend] = useState<{ spentUsd: number; budgetUsd: number; remainingUsd: number } | null>(null);
+  const [spend, setSpend] = useState<{
+    spentUsd: number;
+    budgetUsd: number;
+    remainingUsd: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!tenant) {
       setSpend(null);
       return;
     }
-    api.agentSpend(tenant).then(setSpend).catch(() => setSpend(null));
+    api
+      .agentSpend(tenant)
+      .then(setSpend)
+      .catch(() => setSpend(null));
   }, [tenant]);
 
   const overBudget = spend != null && spend.remainingUsd <= 0;
@@ -357,7 +1031,8 @@ function AgentPanel() {
   return (
     <div>
       <div className="card">
-        <h3>Run analysis agent</h3>
+        <h3>Run search analysis</h3>
+        {tenants.error && <div className="error">{tenants.error}</div>}
         <label>Tenant</label>
         <select value={tenant} onChange={(e) => setTenant(e.target.value)}>
           <option value="">— choose tenant —</option>
@@ -369,7 +1044,8 @@ function AgentPanel() {
         </select>
         {spend && (
           <div className="muted" style={{ marginTop: 8 }}>
-            This month: ${spend.spentUsd.toFixed(2)} / ${spend.budgetUsd.toFixed(2)} spent
+            This month: ${spend.spentUsd.toFixed(2)} / $
+            {spend.budgetUsd.toFixed(2)} spent
             {overBudget && " — budget exhausted, resumes next calendar month"}
           </div>
         )}
@@ -385,7 +1061,10 @@ function AgentPanel() {
                 const r = await api.runAgent(tenant);
                 setResult(r.summary ?? "done");
                 runs.reload();
-                api.agentSpend(tenant).then(setSpend).catch(() => {});
+                api
+                  .agentSpend(tenant)
+                  .then(setSpend)
+                  .catch(() => {});
               } catch (e) {
                 setErr((e as Error).message);
               } finally {
@@ -393,14 +1072,26 @@ function AgentPanel() {
               }
             }}
           >
-            {running ? "Running… (may take a few minutes)" : overBudget ? "Monthly budget reached" : "Run agent"}
+            {running
+              ? "Running… (may take a few minutes)"
+              : overBudget
+                ? "Monthly budget reached"
+                : "Run agent"}
           </button>
         </div>
         {err && <div className="error">{err}</div>}
         {result && <pre className="evidence">{result}</pre>}
       </div>
 
-      <h3 style={{ fontSize: 15 }}>Recent runs</h3>
+      <h3 style={{ fontSize: 15 }}>Recent analyses</h3>
+      {runs.error && (
+        <div className="error" role="alert">
+          {runs.error}
+        </div>
+      )}
+      {!runs.data && !runs.error && (
+        <p className="muted">Loading analysis history…</p>
+      )}
       {runs.data?.length ? (
         <table>
           <thead>
@@ -416,12 +1107,27 @@ function AgentPanel() {
           <tbody>
             {runs.data.map((r) => (
               <tr key={r._id}>
-                <td>{r.tenantApiKey}</td>
-                <td className="muted">{new Date(r.startedAt).toLocaleString()}</td>
+                <td>
+                  {tenants.data?.find((t) => t.apiKey === r.tenantApiKey)
+                    ?.dbName ?? "Unknown store"}
+                  <details>
+                    <summary>Read analysis</summary>
+                    <p className="summary-text">
+                      {r.summary || r.error || "No summary available yet."}
+                    </p>
+                  </details>
+                </td>
+                <td className="muted">
+                  {new Date(r.startedAt).toLocaleString()}
+                </td>
                 <td>
                   <span
                     className={`badge ${
-                      r.status === "completed" ? "running" : r.status === "skipped_budget" ? "pending" : "killed"
+                      r.status === "completed"
+                        ? "running"
+                        : r.status === "skipped_budget"
+                          ? "pending"
+                          : "killed"
                     }`}
                   >
                     {r.status === "skipped_budget" ? "budget hit" : r.status}
@@ -429,7 +1135,9 @@ function AgentPanel() {
                 </td>
                 <td>{r.toolCalls}</td>
                 <td>{r.proposals}</td>
-                <td className="muted">{r.costUsd ? `$${r.costUsd.toFixed(3)}` : "—"}</td>
+                <td className="muted">
+                  {r.costUsd ? `$${r.costUsd.toFixed(3)}` : "—"}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -443,11 +1151,16 @@ function AgentPanel() {
 
 function describeCondition(c: any): string {
   const parts: string[] = [];
-  if (c?.mode === "queryMatch") parts.push(`query ${c.matchType === "exact" ? "=" : "contains"} "${c.patterns?.join('" / "')}"`);
+  if (c?.mode === "queryMatch")
+    parts.push(
+      `query ${c.matchType === "exact" ? "=" : "contains"} "${c.patterns?.join('" / "')}"`,
+    );
   else parts.push("every search");
   if (c?.timeWindow) {
     const { startHour, endHour, timezone } = c.timeWindow;
-    parts.push(`${String(startHour).padStart(2, "0")}:00–${String(endHour).padStart(2, "0")}:00 (${timezone})`);
+    parts.push(
+      `${String(startHour).padStart(2, "0")}:00–${String(endHour).padStart(2, "0")}:00 (${timezone})`,
+    );
   }
   return parts.join(" · ");
 }
@@ -456,19 +1169,28 @@ function describePatch(p: any): string {
   const parts: string[] = [];
   if (p?.categoryAssociation) {
     const a = p.categoryAssociation;
-    parts.push(`also show [${[...(a.softCategories ?? []), ...(a.categories ?? [])].join(", ")}] (top ${a.limit})`);
+    parts.push(
+      `also show [${[...(a.softCategories ?? []), ...(a.categories ?? [])].join(", ")}] (top ${a.limit})`,
+    );
   }
-  if (p?.softCategoriesBoost) parts.push(`boost ${JSON.stringify(p.softCategoriesBoost)}`);
-  if (p?.pinnedResults) parts.push(`pin ${p.pinnedResults.length} product(s)`);
-  if (p?.productBoosts) parts.push(`product boosts ${JSON.stringify(p.productBoosts)}`);
-  if (p?.profileBoostMultiplier != null) parts.push(`personalization ×${p.profileBoostMultiplier}`);
+  if (p?.softCategoriesBoost)
+    parts.push(`boost ${JSON.stringify(p.softCategoriesBoost)}`);
+  if (p?.pinnedResults)
+    parts.push(
+      `pin ${p.pinnedResults.reduce((n: number, r: any) => n + (r.productIds?.length ?? 0), 0)} product placements across ${p.pinnedResults.length} query rule(s)`,
+    );
+  if (p?.productBoosts)
+    parts.push(`product boosts ${JSON.stringify(p.productBoosts)}`);
+  if (p?.profileBoostMultiplier != null)
+    parts.push(`personalization ×${p.profileBoostMultiplier}`);
   return parts.join(" · ") || "(no-op)";
 }
 
 function Rules() {
   const tenants = useAsync<any[]>(() => api.tenants());
-  const rules = useAsync<any[]>(() => api.rules());
-  const [tenant, setTenant] = useState("");
+  const store = useContext(StoreContext);
+  const rules = useAsync<any[]>(() => api.rules(store), [store]);
+  const [tenant, setTenant] = useState(store);
   const [text, setText] = useState("");
   const [parsing, setParsing] = useState(false);
   const [draft, setDraft] = useState<any | null>(null);
@@ -498,7 +1220,9 @@ function Rules() {
     setSaving(true);
     setErr(null);
     try {
-      const dbName = (tenants.data ?? []).find((t) => t.apiKey === tenant)?.dbName;
+      const dbName = (tenants.data ?? []).find(
+        (t) => t.apiKey === tenant,
+      )?.dbName;
       const res = await api.createRule({
         tenantApiKey: tenant,
         dbName,
@@ -512,7 +1236,7 @@ function Rules() {
       setSavedMsg(
         mode === "permanent"
           ? "Saved and live immediately for all matching traffic."
-          : "Sent to Proposals as a pending experiment — approve it there to start measuring."
+          : "Sent to Proposals as a pending experiment — approve it there to start measuring.",
       );
       setDraft(null);
       setText("");
@@ -545,18 +1269,28 @@ function Rules() {
           onChange={(e) => setText(e.target.value)}
         />
         <div className="row" style={{ marginTop: 10 }}>
-          <button className="btn primary" disabled={!tenant || !text || parsing} onClick={parse}>
+          <button
+            className="btn primary"
+            disabled={!tenant || !text || parsing}
+            onClick={parse}
+          >
             {parsing ? "Parsing…" : "Parse"}
           </button>
         </div>
         {err && <div className="error">{err}</div>}
-        {savedMsg && <div className="muted" style={{ marginTop: 8 }}>{savedMsg}</div>}
+        {savedMsg && (
+          <div className="muted" style={{ marginTop: 8 }}>
+            {savedMsg}
+          </div>
+        )}
       </div>
 
       {draft && (
         <div className="card">
           <h3>{draft.name}</h3>
-          <div className="muted">When: {describeCondition(draft.condition)}</div>
+          <div className="muted">
+            When: {describeCondition(draft.condition)}
+          </div>
           <div className="muted">Does: {describePatch(draft.patch)}</div>
           {draft.warnings?.length > 0 && (
             <div className="error" style={{ marginTop: 8 }}>
@@ -569,14 +1303,28 @@ function Rules() {
             <summary className="muted" style={{ cursor: "pointer" }}>
               Raw condition & patch
             </summary>
-            <pre className="evidence">{JSON.stringify({ condition: draft.condition, patch: draft.patch }, null, 2)}</pre>
+            <pre className="evidence">
+              {JSON.stringify(
+                { condition: draft.condition, patch: draft.patch },
+                null,
+                2,
+              )}
+            </pre>
           </details>
 
           <label>Mode</label>
           <div className="row">
-            <select value={mode} onChange={(e) => setMode(e.target.value as any)} style={{ width: "auto" }}>
-              <option value="experiment">Test as experiment first (recommended)</option>
-              <option value="permanent">Apply now, permanently, to all traffic</option>
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value as any)}
+              style={{ width: "auto" }}
+            >
+              <option value="experiment">
+                Test as experiment first (recommended)
+              </option>
+              <option value="permanent">
+                Apply now, permanently, to all traffic
+              </option>
             </select>
             {mode === "experiment" && (
               <>
@@ -594,7 +1342,11 @@ function Rules() {
           </div>
           <div className="row" style={{ marginTop: 10 }}>
             <button className="btn primary" disabled={saving} onClick={save}>
-              {saving ? "Saving…" : mode === "permanent" ? "Apply now" : "Send to Proposals"}
+              {saving
+                ? "Saving…"
+                : mode === "permanent"
+                  ? "Apply now"
+                  : "Send to Proposals"}
             </button>
           </div>
         </div>
@@ -623,7 +1375,11 @@ function Rules() {
                 <td className="muted">{describeCondition(r.condition)}</td>
                 <td className="muted">{describePatch(r.patch)}</td>
                 <td>
-                  <span className={`badge ${r.status === "active" ? "running" : "killed"}`}>{r.status}</span>
+                  <span
+                    className={`badge ${r.status === "active" ? "running" : "killed"}`}
+                  >
+                    {r.status}
+                  </span>
                 </td>
                 <td>{r.last24hTriggers ?? 0}</td>
                 <td>
@@ -631,8 +1387,16 @@ function Rules() {
                     <button
                       className="btn"
                       onClick={async () => {
-                        await api.ruleAction(r._id, r.status === "active" ? "disable" : "enable");
-                        rules.reload();
+                        try {
+                          setErr(null);
+                          await api.ruleAction(
+                            r._id,
+                            r.status === "active" ? "disable" : "enable",
+                          );
+                          rules.reload();
+                        } catch (e) {
+                          setErr((e as Error).message);
+                        }
                       }}
                     >
                       {r.status === "active" ? "Disable" : "Enable"}
@@ -640,8 +1404,13 @@ function Rules() {
                     <button
                       className="btn danger"
                       onClick={async () => {
-                        await api.deleteRule(r._id);
-                        rules.reload();
+                        try {
+                          setErr(null);
+                          await api.deleteRule(r._id);
+                          rules.reload();
+                        } catch (e) {
+                          setErr((e as Error).message);
+                        }
                       }}
                     >
                       Delete
