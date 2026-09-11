@@ -6,15 +6,17 @@ import {
   useContext,
   useRef,
 } from "react";
+import { Optimization } from "./Optimization";
 import { api } from "./api";
 
-type Tab = "overview" | "proposals" | "experiments" | "rules" | "agent";
+type Tab = "optimization" | "overview" | "proposals" | "experiments" | "rules" | "agent";
 const StoreContext = createContext("");
 const pct = (v: number | null | undefined, digits = 1) =>
   v == null ? "—" : `${(v * 100).toFixed(digits)}%`;
 const num = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString();
 const labels: Record<Tab, string> = {
+  optimization: "Daily optimization",
   overview: "Overview",
   proposals: "Opportunities",
   experiments: "Experiments",
@@ -22,6 +24,7 @@ const labels: Record<Tab, string> = {
   rules: "Merchandising",
 };
 const captions: Record<Tab, string> = {
+  optimization: "Turn search findings into verified catalog repairs.",
   overview: "A clear view of your next search improvements.",
   proposals: "Review the evidence. Decide what to test next.",
   experiments: "Understand what changes, and whether it works.",
@@ -53,6 +56,7 @@ export default function App() {
             {(
               [
                 "overview",
+                "optimization",
                 "proposals",
                 "experiments",
                 "agent",
@@ -65,15 +69,15 @@ export default function App() {
                 className={tab === t ? "active" : ""}
                 onClick={() => navigate(t)}
               >
-                <span aria-hidden="true">{["◫", "◇", "⚗", "↺", "≡"][i]}</span>
+                <span aria-hidden="true">{["◫", "✓", "◇", "⚗", "↺", "≡"][i]}</span>
                 {labels[t]}
               </button>
             ))}
           </nav>
           <div className="sidebar-note">
             <span className="status-dot" />
-            Human-reviewed optimization
-            <p>Every proposal starts with your decision.</p>
+            Evidence-led optimization
+            <p>Review repairs or enable daily agent execution.</p>
           </div>
         </aside>
         <div className="workspace">
@@ -131,6 +135,8 @@ export default function App() {
                 />
               ) : tab === "overview" ? (
                 <Overview navigate={navigate} onOpen={setSelected} />
+              ) : tab === "optimization" ? (
+                <Optimization store={store} />
               ) : tab === "proposals" ? (
                 <Proposals onOpenExperiment={setSelected} />
               ) : tab === "experiments" ? (
@@ -322,7 +328,7 @@ function Overview({
                 {new Date(runs[0].startedAt).toLocaleString()} ·{" "}
                 {runs[0].status}
               </p>
-              <p className="summary-text">
+              <p className="summary-text" dir="auto">
                 {runs[0].summary ||
                   runs[0].error ||
                   "No summary available yet."}
@@ -1080,7 +1086,7 @@ function AgentPanel() {
           </button>
         </div>
         {err && <div className="error">{err}</div>}
-        {result && <pre className="evidence">{result}</pre>}
+        {result && <pre className="evidence" dir="rtl" lang="he">{result}</pre>}
       </div>
 
       <h3 style={{ fontSize: 15 }}>Recent analyses</h3>
@@ -1112,7 +1118,7 @@ function AgentPanel() {
                     ?.dbName ?? "Unknown store"}
                   <details>
                     <summary>Read analysis</summary>
-                    <p className="summary-text">
+                    <p className="summary-text" dir="auto">
                       {r.summary || r.error || "No summary available yet."}
                     </p>
                   </details>

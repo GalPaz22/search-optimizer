@@ -765,3 +765,13 @@ main > div > div > table {
     flex-wrap: wrap;
   }
 }
+
+.optimization .card { padding: 24px; margin-bottom: 20px; }
+.optimization-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:16px 0; }
+.optimization fieldset { border:1px solid #deded8; border-radius:10px; padding:16px; margin-top:20px; }
+.optimization label { display:block; margin:12px 0; }
+.optimization input:not([type=checkbox]), .optimization textarea { display:block; width:100%; max-width:700px; padding:10px; border:1px solid #d0d0ca; border-radius:6px; margin-top:6px; }
+.optimization textarea { min-height:90px; }
+.optimization pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:320px; overflow:auto; }
+.optimization summary { cursor:pointer; margin:12px 0; }
+.optimization .table-wrap { overflow:auto; }

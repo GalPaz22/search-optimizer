@@ -17,7 +17,13 @@ async function req(path: string, init?: RequestInit) {
   return res.json();
 }
 
+const optimizationUrl = (tenant: string, suffix = "") => `/api/optimization${suffix}?tenant=${encodeURIComponent(tenant)}`;
 export const api = {
+  optimization: (tenant: string) => req(optimizationUrl(tenant)),
+  optimizationReport: (tenant: string) => req(optimizationUrl(tenant, "/report"), { method: "POST" }),
+  optimizationCreate: (tenant: string, body: unknown) => req(optimizationUrl(tenant, "/actions"), { method: "POST", body: JSON.stringify(body) }),
+  optimizationAction: (tenant: string, id: string, action: string) => req(optimizationUrl(tenant, `/actions/${id}/${action}`), { method: "POST" }),
+  optimizationPolicy: (tenant: string, body: unknown) => req(optimizationUrl(tenant, "/policy"), { method: "PUT", body: JSON.stringify(body) }),
   tenants: () => req("/api/tenants"),
   experiments: (params = "") => req(`/api/experiments${params}`),
   experiment: (id: string) => req(`/api/experiments/${id}`),

@@ -63,6 +63,10 @@ export async function getRedis(): Promise<RedisClientType | null> {
 
 export async function ensureIndexes(): Promise<void> {
   const db = await controlDb();
+  await db.collection("optimization_policies").createIndex({ dbName: 1 }, { unique: true });
+  await db.collection("optimization_reports").createIndex({ dbName: 1, generatedAt: -1 });
+  await db.collection("optimization_actions").createIndex({ dbName: 1, status: 1, createdAt: -1 });
+  await db.collection("optimization_actions").createIndex({ dbName: 1, dedupeKey: 1 }, { unique: true, partialFilterExpression: { status: { $in: ["pending", "applying", "dispatch_pending", "reprocessing", "verifying"] } } });
   await db.collection("experiments").createIndex({ tenantApiKey: 1, status: 1 });
   await db.collection("proposals").createIndex({ tenantApiKey: 1, status: 1 });
   await db.collection("experiment_metrics").createIndex({ experimentId: 1, asOf: -1 });
