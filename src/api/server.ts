@@ -9,6 +9,7 @@ import { proposalRoutes } from "./routes/proposals.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { agentRoutes } from "./routes/agent.js";
 import { ruleRoutes } from "./routes/rules.js";
+import { optimizationRoutes } from "./routes/optimization.js";
 import { debugRoutes } from "./routes/debug.js";
 import { listTenants } from "../core/tenant.js";
 import { getMongo, getRedis } from "../core/db.js";
@@ -69,6 +70,8 @@ export async function buildServer() {
   await app.register(agentRoutes, { prefix: "/api" });
   await app.register(ruleRoutes, { prefix: "/api" });
   await app.register(debugRoutes, { prefix: "/api" });
+
+  await app.register(optimizationRoutes, { prefix: "/api" });
 
   // Serve built ops UI if present
   const uiDist = path.resolve(__dirname, "../../ui/dist");

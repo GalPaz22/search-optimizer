@@ -1,3 +1,5 @@
+import { runDailyOptimization } from "./optimization/service.js";
+import { reconcileActions } from "./optimization/actions.js";
 import cron from "node-cron";
 import { refreshAllActiveKeys } from "./engine/publisher.js";
 import { refreshAllActiveRuleKeys } from "./rules/publisher.js";
@@ -9,6 +11,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const AGENT_INTERVAL_MS = (Number(process.env.AGENT_INTERVAL_DAYS) || 2) * DAY_MS;
 
 export function startCrons(): void {
+  cron.schedule("*/2 * * * *", () => reconcileActions().catch(console.error));
+  cron.schedule("25 * * * *", () => runDailyOptimization().catch(console.error));
   // Keep Redis active-keys alive (TTL 120s) and in sync with Mongo truth.
   cron.schedule("*/30 * * * * *", () => refreshAllActiveKeys().catch(console.error));
   cron.schedule("*/30 * * * * *", () => refreshAllActiveRuleKeys().catch(console.error));

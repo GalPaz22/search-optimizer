@@ -18,11 +18,22 @@ A Claude agent analyzes each tenant's search analytics (queries, clicks, add-to-
 ```bash
 npm install
 # .env: MONGODB_URI, REDIS_URL, ANTHROPIC_API_KEY, OPS_PASSWORD (basic auth; unauthenticated if unset), PORT=4400
+# REPROCESS_SERVICE_URL=https://onboarding-lh63.onrender.com
 npm run ui:build   # build ops UI into ui/dist (served by the API)
 npm start          # API + crons on :4400
 ```
 
 Crons: Redis active-key refresh every 30s · metrics snapshots hourly · proposal expiry daily · nightly agent runs only if `AGENT_NIGHTLY=true`.
+
+## Daily failure workflow
+
+Select a store in **Daily optimization**, refresh the seven-day report, and run the agent. The failure queue prioritizes zero results, low attributed engagement and cart shortfall, with explicit sample and tracking flags. Attribution requires the same normalized query, identifier and a subsequent click/cart within 30 minutes. Priority is a triage heuristic, not predicted revenue.
+
+The agent investigates the top failures and operator notes, saves diagnoses with linked repair/proposal IDs or concrete blockers, and checks existing work before creating changes. Compact tools and paginated evidence keep issue IDs readable within the agent context. Catalog changes use exact product IDs, audited before-state checks, and selected reprocess flags. Reprocess authentication resolves `users.users.apiKey` for the selected store on each request; there is no shared reprocess API key. Scoped classification requires onboarding capabilities v3 and preserves unrelated soft categories.
+
+The store's daily policy enables reports and optional agent analysis once per 24 hours (hourly scheduler checks). Manual and scheduled agent runs share a store lock and existing budget limits. Automatic catalog execution is a separate store policy; ranking experiments retain their review flow. Redis/cache or reprocess verification failures remain visible as unfinished work.
+
+Verified repairs get a seven-day follow-up against an equally long pre-change window. Missing identifiers, tracking gaps or fewer than 30 identifiers per window prevent an improvement conclusion. Before/after cart rates are observational, not proof of purchase conversion, revenue or causal uplift; controlled experiments remain necessary. A catalog-verified action does not prove live search ranking is correct.
 
 ## Ops flow
 
@@ -44,4 +55,10 @@ The agent can also propose a **catalog filter enrichment** after inspecting real
 - Start/kill propagation lag ≤ ~15s (hook's in-process cache) + 30s publisher cron; "kill" is not instant.
 - Exposure logs on search request, not render.
 - Auto-promotion/auto-kill (M4) not yet wired: promote rule of thumb — P(conv win) > 0.95 ∧ P(rev/session win) > 0.90 ∧ min sessions/arm ∧ ≥7 days.
-- Some tenants' `queries` docs lack session ids (e.g. manoVino); experiment metrics are unaffected (exposures carry the id), and the agent's funnel tool falls back to `product_clicks.search_query`.
+- Some tenants' `queries` docs lack session ids (e.g. manoVino). Daily funnel rates exclude unidentified searches from the identifier denominator and show missing coverage; they never substitute click-selected identifiers as the denominator. Purchase/revenue claims require their own valid tracking.
+
+### Hebrew search-leakage reviews
+
+Agent reviews and generated operator explanations are requested in Hebrew, with an in-depth evidence-based diagnosis of search leakage, explicit saved actions, verification criteria and a next-review handoff. The Optimization screen displays the latest completed review followed by links to its investigations and repairs, above the existing execution queue. Experiment proposals remain in Proposals.
+
+Full reviews are retained in `agent_runs.summary`. Each new run receives the three latest completed reviews for the store (with a legacy API-key fallback), and records `previousReviewIds` for traceability. The agent must recheck historical claims, revisit open commitments and distinguish prepared actions, execution, catalog verification and measured search improvement. Failed-run partial text is retained but is not treated as a completed review. Existing historical reviews are not retroactively translated.
