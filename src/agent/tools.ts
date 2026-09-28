@@ -230,7 +230,13 @@ export function buildAnalyticsServer(tenant: Tenant, agentRunId: string) {
           productIds: z.array(z.string().min(1)).min(1).max(500),
           rationale: z.string().min(20),
           hypothesis: z.string().min(20),
-          evidence: z.record(z.string(), z.unknown()),
+          evidence: z.record(z.string(), z.unknown()),          clientSummary: z
+            .string()
+            .min(10)
+            .max(400)
+            .describe(
+              "One or two plain Hebrew sentences for the store owner: what will change in their search and why, citing one number. No technical terms (arm, patch, boost, soft category)."
+            ),
         },
         async (input) => {
           const db = await tenantDb(tenant.dbName);
@@ -243,7 +249,7 @@ export function buildAnalyticsServer(tenant: Tenant, agentRunId: string) {
           if (duplicate) return asJson({ error: "a pending proposal already exists for this filter" });
           const result = await cdb.collection("proposals").insertOne({
             kind: "catalogFilter", tenantApiKey: tenant.apiKey, dbName: tenant.dbName,
-            hypothesis: input.hypothesis, evidence: { ...input.evidence, selectedProducts: matches },
+            hypothesis: input.hypothesis, clientSummary: input.clientSummary, evidence: { ...input.evidence, selectedProducts: matches },
             catalogChange: { filter: input.filter.trim(), productIds: uniqueIds, rationale: input.rationale },
             agentRunId, status: "pending", createdAt: new Date(), expiresAt: new Date(Date.now() + 7 * 86400_000),
           });
@@ -314,6 +320,13 @@ export function buildAnalyticsServer(tenant: Tenant, agentRunId: string) {
           name: z.string().min(3),
           hypothesis: z.string().min(20),
           evidence: z.record(z.string(), z.unknown()),
+          clientSummary: z
+            .string()
+            .min(10)
+            .max(400)
+            .describe(
+              "One or two plain Hebrew sentences for the store owner: what will change in their search and why, citing one number. No technical terms (arm, patch, boost, soft category)."
+            ),
           type: z.enum(["boost", "pin", "softCategoryBoost", "personalizationWeight", "filterTag", "categoryRule"]),
           targeting: z.object({
             mode: z.enum(["all", "queryMatch"]),
@@ -350,6 +363,7 @@ export function buildAnalyticsServer(tenant: Tenant, agentRunId: string) {
           const res = await db.collection("proposals").insertOne({
             tenantApiKey: tenant.apiKey,
             hypothesis: input.hypothesis,
+            clientSummary: input.clientSummary,
             evidence: input.evidence,
             draftExperiment: draft.data,
             agentRunId,

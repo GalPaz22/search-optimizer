@@ -5,7 +5,8 @@ import { publishActiveExperiments } from "./publisher.js";
 
 const TRANSITIONS: Record<string, ExperimentStatus[]> = {
   proposed: ["approved", "rejected"],
-  approved: ["running", "rejected"],
+  // approved → promoted is a direct apply without a test (applyWithoutTest).
+  approved: ["running", "rejected", "promoted"],
   running: ["paused", "completed", "killed", "promoted"],
   paused: ["running", "killed", "completed"],
   completed: ["promoted"],
