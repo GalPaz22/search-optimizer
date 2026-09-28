@@ -95,7 +95,17 @@ export async function proposalRoutes(app: FastifyInstance) {
     );
     if (lock.modifiedCount !== 1) return reply.code(409).send({ error: "proposal was already reviewed" });
     const exp = await createExperiment({ ...proposal.draftExperiment, proposalId: id }, "approved");
-    return applyWithoutTest(String(exp._id), by);
+    try {
+      return await applyWithoutTest(String(exp._id), by);
+    } catch (e) {
+      // Leave nothing half-applied in the review queue: retire the record and reopen the proposal.
+      await transition(String(exp._id), "rejected", by, `direct apply failed: ${(e as Error).message}`).catch(() => {});
+      await db.collection("proposals").updateOne(
+        { _id: new ObjectId(id), status: "approved" },
+        { $set: { status: "pending", applyError: (e as Error).message }, $unset: { appliedWithoutTest: "" } }
+      );
+      return reply.code(409).send({ error: (e as Error).message });
+    }
   });
 
   app.post("/proposals/:id/reject", async (req, reply) => {
