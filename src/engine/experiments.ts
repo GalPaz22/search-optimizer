@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 import { controlDb, ensureTenantExperimentIndexes } from "../core/db.js";
 import { ExperimentDoc, ExperimentInput, ExperimentStatus } from "../core/types.js";
 import { publishActiveExperiments } from "./publisher.js";
+import { siblingApiKeys } from "../core/tenant.js";
 
 const TRANSITIONS: Record<string, ExperimentStatus[]> = {
   proposed: ["approved", "rejected"],
@@ -84,7 +85,7 @@ export async function getExperiment(id: string): Promise<ExperimentDoc | null> {
 export async function listExperiments(filter: { tenantApiKey?: string; status?: string } = {}) {
   const db = await controlDb();
   const q: Record<string, unknown> = {};
-  if (filter.tenantApiKey) q.tenantApiKey = filter.tenantApiKey;
+  if (filter.tenantApiKey) q.tenantApiKey = { $in: await siblingApiKeys(filter.tenantApiKey) };
   if (filter.status) q.status = filter.status;
   return db.collection("experiments").find(q).sort({ createdAt: -1 }).limit(200).toArray();
 }
