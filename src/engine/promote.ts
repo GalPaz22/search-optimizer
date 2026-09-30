@@ -15,8 +15,43 @@ export async function promoteExperiment(id: string, by?: string, armKey = "v1") 
   if (!["running", "completed", "paused"].includes(exp.status)) {
     throw new Error(`Cannot promote from status '${exp.status}'`);
   }
+  const arm = variantArm(exp, armKey);
+  await materializePatch(exp, arm);
+  return transition(id, "promoted", by, `promoted arm '${arm.key}'`);
+}
+
+/**
+ * Applies an approved (never run) experiment's variant straight to tenant
+ * config, without an A/B test. Used when the store owner accepts a proposal
+ * as is. The experiment record is kept so the change stays auditable.
+ */
+export async function applyWithoutTest(id: string, by?: string, armKey = "v1") {
+  const exp = (await getExperiment(id)) as ExperimentDoc | null;
+  if (!exp) throw new Error("Experiment not found");
+  if (exp.status !== "approved") throw new Error(`Cannot apply directly from status '${exp.status}'`);
+  const arm = variantArm(exp, armKey);
+  if (!isDirectlyApplicable(arm.patch)) {
+    throw new Error("This change has no permanent config field and can only run as an A/B test");
+  }
+  await materializePatch(exp, arm);
+  return transition(id, "promoted", by, `applied arm '${arm.key}' without a test`);
+}
+
+// Patch keys materializePatch can write permanently (personalizationWeight
+// and filter tags have no permanent config field yet).
+const PERMANENT_KEYS = ["softCategoriesBoost", "pinnedResults", "categoryAssociation", "productBoosts"];
+
+export function isDirectlyApplicable(patch: Record<string, unknown> | undefined): boolean {
+  return Object.keys(patch ?? {}).some((k) => PERMANENT_KEYS.includes(k));
+}
+
+function variantArm(exp: ExperimentDoc, armKey: string) {
   const arm = exp.arms.find((a) => a.key === armKey) ?? exp.arms.find((a) => a.key !== "control");
   if (!arm) throw new Error("No variant arm to promote");
+  return arm;
+}
+
+async function materializePatch(exp: ExperimentDoc, arm: ExperimentDoc["arms"][number]) {
   const patch = { ...(arm.patch ?? {}) } as typeof arm.patch & { pinnedResults?: any[] };
 
   // categoryAssociation is resolved dynamically per request at experiment time
@@ -85,6 +120,4 @@ export async function promoteExperiment(id: string, by?: string, armKey = "v1") 
 
   const redis = await getRedis();
   if (redis) await redis.del(`store-config:${exp.tenantApiKey}`);
-
-  return transition(id, "promoted", by, `promoted arm '${arm.key}'`);
 }

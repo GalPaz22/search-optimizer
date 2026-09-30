@@ -122,6 +122,8 @@ export interface ProposalDoc {
   kind?: "experiment";
   tenantApiKey: string;
   hypothesis: string;
+  /** Plain-language Hebrew summary shown to the store owner. */
+  clientSummary?: string;
   evidence: Record<string, unknown>;
   draftExperiment: ExperimentInput;
   agentRunId?: string;
@@ -146,6 +148,7 @@ export interface CatalogFilterProposalDoc {
   tenantApiKey: string;
   dbName: string;
   hypothesis: string;
+  clientSummary?: string;
   evidence: Record<string, unknown>;
   catalogChange: CatalogFilterChange;
   agentRunId?: string;
