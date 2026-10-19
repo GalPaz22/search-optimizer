@@ -7,15 +7,17 @@ import {
   useRef,
 } from "react";
 import { Optimization } from "./Optimization";
+import { Conversion } from "./Conversion";
 import { api } from "./api";
 
-type Tab = "optimization" | "overview" | "proposals" | "experiments" | "rules" | "agent";
+type Tab = "conversion" | "optimization" | "overview" | "proposals" | "experiments" | "rules" | "agent";
 const StoreContext = createContext("");
 const pct = (v: number | null | undefined, digits = 1) =>
   v == null ? "—" : `${(v * 100).toFixed(digits)}%`;
 const num = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString();
 const labels: Record<Tab, string> = {
+  conversion: "Conversion",
   optimization: "Daily optimization",
   overview: "Overview",
   proposals: "Opportunities",
@@ -24,6 +26,7 @@ const labels: Record<Tab, string> = {
   rules: "Merchandising",
 };
 const captions: Record<Tab, string> = {
+  conversion: "Where search loses buyers, and what the agent is doing about it.",
   optimization: "Turn search findings into verified catalog repairs.",
   overview: "A clear view of your next search improvements.",
   proposals: "Review the evidence. Decide what to test next.",
@@ -33,7 +36,7 @@ const captions: Record<Tab, string> = {
 };
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>("conversion");
   const [selected, setSelected] = useState<string | null>(null);
   const [store, setStore] = useState("");
   const tenants = useAsync<any[]>(() => api.tenants());
@@ -55,6 +58,7 @@ export default function App() {
           <nav aria-label="Main navigation">
             {(
               [
+                "conversion",
                 "overview",
                 "optimization",
                 "proposals",
@@ -69,7 +73,7 @@ export default function App() {
                 className={tab === t ? "active" : ""}
                 onClick={() => navigate(t)}
               >
-                <span aria-hidden="true">{["◫", "✓", "◇", "⚗", "↺", "≡"][i]}</span>
+                <span aria-hidden="true">{["↗", "◫", "✓", "◇", "⚗", "↺", "≡"][i]}</span>
                 {labels[t]}
               </button>
             ))}
@@ -133,6 +137,8 @@ export default function App() {
                   id={selected}
                   onBack={() => setSelected(null)}
                 />
+              ) : tab === "conversion" ? (
+                <Conversion store={store} />
               ) : tab === "overview" ? (
                 <Overview navigate={navigate} onOpen={setSelected} />
               ) : tab === "optimization" ? (
@@ -425,16 +431,20 @@ function Proposals({
       {data.map((p) => (
         <div className="card proposal-card" key={p._id}>
           <div className="row spread">
-            <h3>
+            <h3 dir="auto">
               {p.kind === "catalogFilter"
                 ? `Add catalog filter: ${p.catalogChange?.filter}`
-                : (p.draftExperiment?.name ?? "Untitled")}
+                : p.kind === "rule"
+                  ? `Permanent rule: ${p.draftRule?.name}`
+                  : (p.draftExperiment?.name ?? "Untitled")}
             </h3>
             <span className="badge pending">pending</span>
           </div>
           <div className="muted">
             {p.kind === "catalogFilter" ? (
               `${p.dbName ?? "Catalog"} · catalog enrichment · ${p.catalogChange?.productIds?.length ?? 0} products · requires approval`
+            ) : p.kind === "rule" ? (
+              `${p.dbName} · permanent rule · ${describeCondition(p.draftRule?.condition)} · applies to 100% of matching searches`
             ) : (
               <>
                 {p.draftExperiment?.dbName} · {p.draftExperiment?.type} ·{" "}
@@ -445,7 +455,18 @@ function Proposals({
               </>
             )}
           </div>
-          <p style={{ fontSize: 14 }}>{p.hypothesis}</p>
+          <p style={{ fontSize: 14 }} dir="auto">{p.hypothesis}</p>
+          {!!p.guard?.warnings?.length && (
+            <div className="guard-warnings">
+              {p.guard.warnings.map((w: string) => <p key={w}>⚠ {w}</p>)}
+              {!!p.guard.protectedQueries?.length && (
+                <details>
+                  <summary>Queries that work today and must keep their products</summary>
+                  <ul>{p.guard.protectedQueries.map((q: any) => <li key={q.query} dir="auto"><strong>{q.query}</strong> ({q.searches} searches): {q.keep.join(" · ")}</li>)}</ul>
+                </details>
+              )}
+            </div>
+          )}
           <button
             className="btn"
             aria-expanded={review === p._id}
@@ -461,7 +482,17 @@ function Proposals({
               <h2>Evidence behind this proposal</h2>
               <Evidence value={p.evidence} />
               <h2>What will change</h2>
-              {p.kind === "catalogFilter" ? (
+              {p.kind === "rule" ? (
+                <>
+                  <p dir="auto">{p.draftRule?.naturalLanguageText}</p>
+                  <div className="plan-grid">
+                    <div><label>Condition</label>{describeCondition(p.draftRule?.condition)}</div>
+                    <div><label>Change</label>{describePatch(p.draftRule?.patch)}</div>
+                  </div>
+                  <Evidence value={p.draftRule?.patch} />
+                  <p className="muted">A permanent rule has no control group: it applies to every matching search until disabled in Merchandising.</p>
+                </>
+              ) : p.kind === "catalogFilter" ? (
                 <>
                   <p>{p.catalogChange?.rationale}</p>
                   <Evidence value={p.catalogChange} />
@@ -533,7 +564,7 @@ function Proposals({
                 rows={2}
               />
               <div className="row" style={{ marginTop: 10 }}>
-                {p.kind === "catalogFilter" ? (
+                {p.kind === "catalogFilter" || p.kind === "rule" ? (
                   <button
                     className="btn primary"
                     disabled={busy === p._id}
@@ -541,7 +572,7 @@ function Proposals({
                       act(() => api.approveProposal(p._id, false), p._id)
                     }
                   >
-                    Approve & apply to catalog
+                    {p.kind === "rule" ? "Approve & activate rule" : "Approve & apply to catalog"}
                   </button>
                 ) : (
                   <>
@@ -1064,8 +1095,15 @@ function AgentPanel() {
               setErr(null);
               setResult(null);
               try {
-                const r = await api.runAgent(tenant);
-                setResult(r.summary ?? "done");
+                const { runId } = await api.runAgent(tenant);
+                runs.reload();
+                // The run continues in the background; follow it until it ends.
+                let r = await api.agentRun(runId);
+                while (r.status === "queued" || r.status === "running") {
+                  await new Promise((ok) => setTimeout(ok, 4000));
+                  r = await api.agentRun(runId);
+                }
+                setResult(r.summary || r.error || r.status);
                 runs.reload();
                 api
                   .agentSpend(tenant)
@@ -1079,7 +1117,7 @@ function AgentPanel() {
             }}
           >
             {running
-              ? "Running… (may take a few minutes)"
+              ? "Running… (follow the steps on the Conversion page)"
               : overBudget
                 ? "Monthly budget reached"
                 : "Run agent"}

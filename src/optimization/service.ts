@@ -4,6 +4,7 @@ import { getTenantByApiKey, Tenant } from "../core/tenant.js";
 import { searchReport } from "./analytics.js";
 import { createAction } from "./actions.js";
 import { compareRepair, prioritizeFailures } from "./failures.js";
+import { runWeeklyReview } from "./weekly.js";
 
 export async function collectDailyReport(tenant: Tenant) {
   const raw = await searchReport(tenant.dbName, 7), db = await controlDb();
@@ -21,7 +22,8 @@ export async function collectDailyReport(tenant: Tenant) {
     evidence: { reportId: String(result.insertedId), missingSessionRate: report.current.missingSessionRate, previousGaps: report.previous.trackingGapDays, quality: report.quality },
   });
   await measureRepairOutcomes(tenant);
-  return { reportId: String(result.insertedId), ...report };
+  const weekly = await runWeeklyReview(tenant).catch(e => ({ error: (e as Error).message }));
+  return { reportId: String(result.insertedId), ...report, weekly: "error" in weekly ? weekly : { reviewId: weekly.reviewId, created: weekly.created, ranked: weekly.queries.length } };
 }
 
 export async function measureRepairOutcomes(tenant: Tenant, now = new Date()) {
@@ -72,7 +74,7 @@ export async function runDailyOptimization() {
       await collectDailyReport(tenant);
       if (policy.agentEnabled) {
         const { runAgentForTenant } = await import("../agent/runner.js");
-        await runAgentForTenant(tenant.apiKey);
+        await runAgentForTenant(tenant.apiKey, { trigger: "schedule" });
       }
       await db.collection("optimization_policies").updateOne({ _id: policy._id }, { $set: { lastRunAt: new Date(), nextRunAt: new Date(+now + 86400000) }, $unset: { leaseUntil: "", lastError: "" } });
     } catch (error) {

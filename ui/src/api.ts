@@ -49,10 +49,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ by: "ops", note }),
     }),
-  runAgent: (tenant: string) =>
+  runAgent: (tenant: string, request = "") =>
     req(`/api/agent/run?tenant=${encodeURIComponent(tenant)}`, {
       method: "POST",
+      body: JSON.stringify(request.trim() ? { request: request.trim() } : {}),
     }),
+  agentRun: (id: string) => req(`/api/agent/runs/${id}`),
+  stopAgentRun: (id: string) => req(`/api/agent/runs/${id}/stop`, { method: "POST" }),
+  conversion: (tenant: string) => req(`/api/conversion?tenant=${encodeURIComponent(tenant)}`),
+  conversionRefresh: (tenant: string, days: number) =>
+    req(`/api/conversion/refresh?tenant=${encodeURIComponent(tenant)}&days=${days}`, { method: "POST" }),
   agentRuns: (tenant = "") =>
     req(
       `/api/agent/runs${tenant ? `?tenant=${encodeURIComponent(tenant)}` : ""}`,

@@ -25,7 +25,7 @@ export function Optimization({ store }: { store: string }) {
       <h2>Daily search improvements</h2><p>Prioritize failing searches, diagnose the cause, execute a scoped repair and measure search-to-cart performance afterward.</p>
       <div className="optimization-controls">
         <button className="btn primary" disabled={!!busy} onClick={() => run("Building report…", () => api.optimizationReport(store))}>Refresh 7-day report</button>
-        <button className="btn" disabled={!!busy} onClick={() => run("מנתח דליפות ומכין פעולות…", () => api.runAgent(store))}>סקירת דליפות והכנת פעולות</button>
+        <button className="btn" disabled={!!busy} onClick={() => run("הסוכן הופעל — ההתקדמות מוצגת במסך Conversion", () => api.runAgent(store))}>סקירת דליפות והכנת פעולות</button>
         {busy && <span role="status">{busy}</span>}
       </div>
       <fieldset disabled={!!busy}><legend>Daily operation</legend>

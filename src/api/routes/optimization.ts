@@ -5,6 +5,8 @@ import { controlDb } from "../../core/db.js";
 import { getTenantByApiKey } from "../../core/tenant.js";
 import { createAction, executeAction, reconcileAction } from "../../optimization/actions.js";
 import { collectDailyReport, latestReport } from "../../optimization/service.js";
+import { latestWeeklyReview, runWeeklyReview } from "../../optimization/weekly.js";
+import { listPlans } from "../../optimization/plans.js";
 
 export async function optimizationRoutes(app: FastifyInstance) {
   app.addHook("preHandler", async (req, reply) => {
@@ -20,9 +22,12 @@ export async function optimizationRoutes(app: FastifyInstance) {
       db.collection("optimization_policies").findOne({ dbName: t.dbName }),
       db.collection("agent_runs").find({ $or: [{ dbName: t.dbName }, { tenantApiKey: t.apiKey }], status: "completed" }).sort({ startedAt: -1 }).limit(1).project({ summary: 1, startedAt: 1, actions: 1, proposals: 1 }).next(),
     ]);
-    return { report, actions, policy, review, reprocessConfigured: Boolean(process.env.REPROCESS_SERVICE_URL) };
+    return { report, actions, policy, review, reprocessConfigured: Boolean(process.env.REPROCESS_SERVICE_URL), schedulerEnabled: process.env.ENABLE_CRONS !== "false" };
   });
+  app.get("/optimization/plans", async req => listPlans(await store(req)));
   app.post("/optimization/report", async req => collectDailyReport(await store(req)));
+  app.get("/optimization/weekly-review", async req => ({ review: await latestWeeklyReview(await store(req)) }));
+  app.post("/optimization/weekly-review", async req => ({ review: await runWeeklyReview(await store(req)) }));
   app.post("/optimization/actions", async (req, reply) => {
     try { return await createAction(await store(req), req.body); }
     catch (e) { return reply.code(400).send({ error: (e as Error).message }); }

@@ -1,64 +1,72 @@
 # search-optimizer
 
-Agentic search-revenue optimization control plane for dashboard-server tenants.
+Search-conversion agent for dashboard-server stores. It connects to each store's own search context — the merchant's settings, catalog, and every search, click, add-to-cart and order the storefront logs — finds where search loses buyers, and leaves the store with reviewable actions that fix it. It then measures what happened.
 
-A Claude agent analyzes each tenant's search analytics (queries, clicks, add-to-carts, orders), proposes ranking modifications — product **boosts**, per-query **pins**, **soft-category weight** changes, **personalization weight** tuning — and, after human approval in the ops UI, runs them as deterministic A/B experiments measured on CTR → add-to-cart → conversion → revenue/session.
+The agent works like tenant-studio's studio agent, adapted to live stores. It starts from a whole-store workspace, uses read-only analytics tools, runs a guarded set of change tools and ends every run with a structured, grounded report. The difference: tenant-studio edits a draft search module it can re-run locally, whereas here every lever touches production. So search changes wait for human approval, and catalog repairs execute only where the store's policy allows it.
+
+## What a run does
+
+1. **Data report** (deterministic, no model calls, read-only on the store) — `src/analytics/`:
+   - **Funnel** over distinct sessions: searched → clicked (30 min) → carted (2 h) → checkout / purchased (24 h). Orders, recorded revenue by currency, and the share that followed a search. It also compares purchase rates for carting sessions that searched against those that didn't.
+   - **Per-query conversion** with explicit attribution (the event's `search_query`) or inferred attribution (the last search in the same session, within the stage window). Every query gets a **leak stage** (zero results / shown not clicked / clicked not carted / carted not bought) judged against the store's own funnel, plus **sessions below average**, a size for triage rather than a forecast.
+   - **Production baseline**: queries that work today (shoppers clearly choose products), queries that fail, and **catalog gaps**, where shoppers want products that are missing, hidden or out of stock and no ranking rule can help.
+   - **Audit candidates**, interleaved by failure mode so no single kind crowds out the rest.
+   - **Tracking issues**: what limits the numbers, in Hebrew with the fix. Searches without `session_id`, no purchase tracking, order sessions that don't match browsing sessions, logging gaps, event product ids that don't match the catalog, automated queries (excluded from baselines), and experiments that barely get exposure.
+2. **Agent** (`src/agent/`, Claude Agent SDK) starts with WORKSPACE and DATA — the store's production settings, rules and experiments live in search, open work and measured outcomes, rejected proposals, previous reviews, and earlier operator requests. It then:
+   - digs in: `customer_analytics`, `store_funnel`, `query_evidence` (shown vs chosen products, with availability), `search_audit`, `production_baseline`, and catalog tools;
+   - acts: catalog repairs, targeted reprocess and investigations (`create_optimization_action`; executes only under `autoExecuteCatalog`), permanent rules (`propose_rule`) and A/B experiments (`propose_experiment`), both human-approved;
+   - closes the loop: failure queue, diagnoses, verification of submitted jobs, experiment readouts;
+   - ends with `submit_conversion_report`: findings, prioritized proposals (evidence, exact queries, change, expected impact as a hypothesis, metric, validation and rollback, risk, linked action and proposal ids), and limitations. It also writes a Hebrew review.
+
+### Guardrails
+
+- A report can only cite queries the run actually saw in the store's data, and only action or proposal ids that exist in the store. Otherwise it is rejected and the agent must fix it.
+- Pins must point at visible, in-stock catalog products. Soft-category boosts must use labels that exist. Category association is never global. A change touching queries that already work lists them, with the products shoppers choose there, for the reviewer.
+- Permanent rules must target specific queries. Global boosts and personalization weights need an experiment.
+- At most 6 experiment/rule proposals per run. Per-run and monthly budgets (`AGENT_RUN_BUDGET_USD`, `AGENT_MONTHLY_BUDGET_USD`). One run per store at a time.
+- Runs return immediately. Every tool call streams into `agent_runs.steps`. The operator can stop a run, and runs killed by a restart are marked interrupted, which releases the store's lock.
 
 ## Architecture
 
-- **This repo**: Fastify API + cron + Claude Agent SDK runner + React ops UI, one process on `:4400`. Data in Mongo db `control_plane` (same Atlas cluster as dashboard-server) + tenant-local `experiment_exposures` / `session_aliases` collections.
-- **dashboard-server**: only a thin hook — `experiments-hook.mjs` (`applyExperimentVariant`) patches the store config per request from Redis key `experiments:active:{apiKey}`, logs exposures, and **falls back to control on any failure** (Redis down, parse error, anything). Six insertion points: /search, /fast-search, /simple-search (before the pinned-results block), `scoreProductLineResult` boost term, `calculateProfileBoost` return, /profile/merge (session alias).
+- **This repo**: Fastify API, crons and the agent runner, plus the React ops UI, in one process on `:4400`. Control data lives in Mongo db `control_plane` (`conversion_reports`, `agent_runs`, `optimization_actions`, `proposals`, `experiments`, `rules`, `experiment_metrics`). Tenant data (`queries`, `product_clicks`, `cart`, `checkout_events`, `zero_searches`, `products`, `experiment_exposures`) is read from each store's database; catalog repairs are the only tenant writes.
+- **dashboard-server** applies experiments and rules through `experiments-hook.mjs`, from Redis keys `experiments:active:{apiKey}` / `rules:active:{apiKey}`. It logs exposures and **falls back to control on any failure**. It enrolls a shopper only when the search request carries `session_id`.
 
-## Assignment model
-
-`fnv1a32(experimentId + ':' + sessionId) % 10000` → sticky, deterministic, storage-free. Enrollment = `bucket < trafficPct*100`; arm by cumulative weights. First-exposure attribution via unique index `{experiment_id, session_id}`. Login id-rewrites (`/profile/merge`) are unified through `session_aliases`; a `contaminationRate` is reported per experiment. The implementation must stay behaviorally identical in `src/core/assignment.ts` and `../dashboard-server/experiments-hook.mjs` (covered by `test/m1-verify.test.ts`).
+Assignment: `fnv1a32(experimentId + ':' + sessionId) % 10000`, sticky and storage-free, and identical in `src/core/assignment.ts` and the hook (`test/m1-verify.test.ts`).
 
 ## Run
 
 ```bash
 npm install
 # .env: MONGODB_URI, REDIS_URL, ANTHROPIC_API_KEY, OPS_PASSWORD (basic auth; unauthenticated if unset), PORT=4400
-# REPROCESS_SERVICE_URL=https://onboarding-lh63.onrender.com
-npm run ui:build   # build ops UI into ui/dist (served by the API)
+# optional: AGENT_MODEL (default claude-fable-5), AGENT_EFFORT (model default), AGENT_RUN_BUDGET_USD (2), AGENT_MONTHLY_BUDGET_USD (20), AGENT_MAX_TURNS (45), AGENT_RUN_TIMEOUT_MIN (50), REPROCESS_SERVICE_URL
+npm run ui:build   # ops UI into ui/dist (served by the API; rebuild before start)
 npm start          # API + crons on :4400
 ```
 
-Crons: Redis active-key refresh every 30s · metrics snapshots hourly · proposal expiry daily · nightly agent runs only if `AGENT_NIGHTLY=true`.
-
-## Daily failure workflow
-
-Select a store in **Daily optimization**, refresh the seven-day report, and run the agent. The failure queue prioritizes zero results, low attributed engagement and cart shortfall, with explicit sample and tracking flags. Attribution requires the same normalized query, identifier and a subsequent click/cart within 30 minutes. Priority is a triage heuristic, not predicted revenue.
-
-The agent investigates the top failures and operator notes, saves diagnoses with linked repair/proposal IDs or concrete blockers, and checks existing work before creating changes. Compact tools and paginated evidence keep issue IDs readable within the agent context. Catalog changes use exact product IDs, audited before-state checks, and selected reprocess flags. Reprocess authentication resolves `users.users.apiKey` for the selected store on each request; there is no shared reprocess API key. Scoped classification requires onboarding capabilities v3 and preserves unrelated soft categories.
-
-The store's daily policy enables reports and optional agent analysis once per 24 hours (hourly scheduler checks). Manual and scheduled agent runs share a store lock and existing budget limits. Automatic catalog execution is a separate store policy; ranking experiments retain their review flow. Redis/cache or reprocess verification failures remain visible as unfinished work.
-
-Verified repairs get a seven-day follow-up against an equally long pre-change window. Missing identifiers, tracking gaps or fewer than 30 identifiers per window prevent an improvement conclusion. Before/after cart rates are observational, not proof of purchase conversion, revenue or causal uplift; controlled experiments remain necessary. A catalog-verified action does not prove live search ranking is correct.
+Crons: Redis active keys every 30 s · reprocess reconciliation every 2 min · interrupted-run recovery every 5 min · experiment metrics hourly · daily store policies hourly check · agent for stores without a daily policy when `AGENT_NIGHTLY=true` (every `AGENT_INTERVAL_DAYS`) · proposal expiry daily.
 
 ## Ops flow
 
-1. **Agent tab** → run analysis for a tenant (or wait for nightly cron). Max 3 proposals/run, every hypothesis must cite tool-derived numbers, control arm mandatory.
-2. **Proposals tab** → Approve & start / Approve only / Reject.
-3. **Experiments tab** → per-arm funnel, Bayesian P(variant wins) on conversion and revenue/session + z-test p-value, lifecycle buttons (pause / complete / kill / promote).
-4. **Promote** materializes the winning patch into tenant config (`users` **and** `semantix` core dbs — known dashboard-server inconsistency) / product `boost` fields, and busts `store-config:{apiKey}`.
+1. **Conversion** — pick a store: funnel, tracking issues, biggest leaks, audit candidates, baseline and catalog gaps, and the latest agent report. Refresh the data, or run the agent with an optional focus request ("תתמקד בחיפושים שמגיעים לסל ולא נקנים") and follow its steps live; the page also lets you stop a run.
+2. **Opportunities** — approve or reject experiments, permanent rules and legacy catalog-filter proposals, with guard warnings and the queries a change must protect.
+3. **Daily optimization** — the repair queue: execute, verify or dismiss catalog actions, and set the store's daily policy.
+4. **Experiments** — per-arm funnel with click, conversion and revenue readouts. Pause, complete, kill or promote.
+5. **Merchandising** — permanent rules.
 
-The agent can also propose a **catalog filter enrichment** after inspecting real catalog coverage. These are not experiments: the proposal contains an explicit, previewable product-id set and requires human approval. Approval adds the filter to tenant credentials in both core databases, tags those catalog products, invalidates store-config caches, and records a before-state audit in `catalog_change_audits`.
+## API
+
+- `GET /api/conversion?tenant=` returns the latest data report, the agent report (with the live status of linked actions and proposals), the store profile and the latest run. `POST /api/conversion/refresh?tenant=&days=` rebuilds the data report.
+- `POST /api/agent/run?tenant=` with `{request?}` returns `{runId}` at once. `GET /api/agent/runs/:id` returns the steps and status. `POST /api/agent/runs/:id/stop` stops the run. `GET /api/agent/runs`, `GET /api/agent/spend`.
+- Experiments, proposals (approving a `rule` proposal activates it), rules, optimization actions and policy, debug Redis: see `src/api/routes/`.
 
 ## Verification
 
-- `node --test --import tsx test/m1-verify.test.ts` — assignment parity with the dashboard-server hook, 50/50 split, traffic %, control fallback, patch composition.
-- `npx tsx scripts/verify-metrics.ts` — synthetic funnel → aggregator output hand-checked (creates + drops `so_metrics_test_db`).
+- `npm test` — attribution and funnel math (every timestamp shape, `checkout_completed` only, order dedupe), leak stages and automated-query detection, catalog matching, baseline and gap classification, tracking issues, guards, report grounding. It also covers the failure queue and the assignment parity with the hook.
+- `npx tsx scripts/verify-metrics.ts` — synthetic funnel → aggregator output (creates and drops `so_metrics_test_db`).
 
-## Known v1 limitations
+## Known limitations
 
-- Boost experiments affect `scoreProductLineResult` (weightedScore) only; Mongo-side `boost:-1` sort paths are untouched.
-- Start/kill propagation lag ≤ ~15s (hook's in-process cache) + 30s publisher cron; "kill" is not instant.
-- Exposure logs on search request, not render.
-- Auto-promotion/auto-kill (M4) not yet wired: promote rule of thumb — P(conv win) > 0.95 ∧ P(rev/session win) > 0.90 ∧ min sessions/arm ∧ ≥7 days.
-- Some tenants' `queries` docs lack session ids (e.g. manoVino). Daily funnel rates exclude unidentified searches from the identifier denominator and show missing coverage; they never substitute click-selected identifiers as the denominator. Purchase/revenue claims require their own valid tracking.
-
-### Hebrew search-leakage reviews
-
-Agent reviews and generated operator explanations are requested in Hebrew, with an in-depth evidence-based diagnosis of search leakage, explicit saved actions, verification criteria and a next-review handoff. The Optimization screen displays the latest completed review followed by links to its investigations and repairs, above the existing execution queue. Experiment proposals remain in Proposals.
-
-Full reviews are retained in `agent_runs.summary`. Each new run receives the three latest completed reviews for the store (with a legacy API-key fallback), and records `previousReviewIds` for traceability. The agent must recheck historical claims, revisit open commitments and distinguish prepared actions, execution, catalog verification and measured search improvement. Failed-run partial text is retained but is not treated as a completed review. Existing historical reviews are not retroactively translated.
+- The agent cannot re-run a store's live search to verify a change, because dashboard-server logs every `/search` call into the store's analytics. Evidence comes from `queries.deliveredProducts` (≤20 names per search) and post-change measurement. A no-log probe header in dashboard-server would enable a closed verification loop like tenant-studio's.
+- Inferred attribution is evidence, not proof. Stores without session ids on searches, or without `checkout_completed`, cannot be measured to purchase; the report says so rather than showing zeros.
+- Reads are bounded (120k events per source per window). A truncated source is reported, and a shorter window should be used.
+- Boost experiments affect `scoreProductLineResult` only. Start/kill propagation lags up to ~45 s.

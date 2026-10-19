@@ -3,20 +3,28 @@ services:
     name: search-optimizer
     env: node
     plan: starter
-    buildCommand: npm install --include=dev && npm run ui:build
+    buildCommand: npm ci --include=dev && npm run build && npm test && npm run ui:build
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
+      - key: NODE_ENV
+        value: production
       - key: MONGODB_URI
         sync: false
       - key: REDIS_URL
         sync: false
+      - key: REPROCESS_SERVICE_URL
+        value: "https://onboarding-lh63.onrender.com"
+      - key: SEARCH_SERVICE_URL
+        value: "https://api.semantix-ai.com"
+      - key: ENABLE_CRONS
+        value: "false"
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: OPS_PASSWORD
         sync: false
       - key: AGENT_NIGHTLY
-        value: "true"
+        value: "false"
       - key: AGENT_INTERVAL_DAYS
         value: "2"
       - key: AGENT_MONTHLY_BUDGET_USD

@@ -171,6 +171,24 @@ export type RuleInput = z.infer<typeof RuleInput>;
 
 export const RuleStatus = z.enum(["active", "disabled"]);
 
+// An agent-authored permanent rule waiting for human approval. Rules have no
+// control arm, so the agent may only propose them for scoped, evidence-backed
+// fixes (a query that returns nothing or the wrong kind of product).
+export interface RuleProposalDoc {
+  _id?: any;
+  kind: "rule";
+  tenantApiKey: string;
+  dbName: string;
+  hypothesis: string;
+  evidence: Record<string, unknown>;
+  draftRule: RuleInput;
+  guard?: { warnings: string[]; protectedQueries: { query: string; searches: number; keep: string[] }[] };
+  agentRunId?: string;
+  status: z.infer<typeof ProposalStatus>;
+  createdAt: Date;
+  expiresAt: Date;
+}
+
 export interface RuleDoc extends RuleInput {
   _id?: any;
   status: z.infer<typeof RuleStatus>;

@@ -4,18 +4,25 @@ import cron from "node-cron";
 import { refreshAllActiveKeys } from "./engine/publisher.js";
 import { refreshAllActiveRuleKeys } from "./rules/publisher.js";
 import { aggregateAllRunning } from "./metrics/aggregate.js";
-import { runAgentForDueTenants } from "./agent/runner.js";
+import { recoverInterruptedRuns, runAgentForDueTenants } from "./agent/runner.js";
 import { controlDb } from "./core/db.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const AGENT_INTERVAL_MS = (Number(process.env.AGENT_INTERVAL_DAYS) || 2) * DAY_MS;
 
-export function startCrons(): void {
-  cron.schedule("*/2 * * * *", () => reconcileActions().catch(console.error));
-  cron.schedule("25 * * * *", () => runDailyOptimization().catch(console.error));
+export function startCrons({ scheduledWork = true } = {}): void {
   // Keep Redis active-keys alive (TTL 120s) and in sync with Mongo truth.
   cron.schedule("*/30 * * * * *", () => refreshAllActiveKeys().catch(console.error));
   cron.schedule("*/30 * * * * *", () => refreshAllActiveRuleKeys().catch(console.error));
+
+  // Local dashboards still need their active rules to survive the Redis TTL.
+  // Scheduled catalog writes and model runs are independent of this cache refresh.
+  if (!scheduledWork) return;
+  cron.schedule("*/2 * * * *", () => reconcileActions().catch(console.error));
+  cron.schedule("25 * * * *", () => runDailyOptimization().catch(console.error));
+
+  // Release runs a restart killed, so their stores can be analysed again.
+  cron.schedule("*/5 * * * *", () => recoverInterruptedRuns().catch(console.error));
 
   // Hourly per-arm funnel snapshots.
   cron.schedule("5 * * * *", () => aggregateAllRunning().catch(console.error));

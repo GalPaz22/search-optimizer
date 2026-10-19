@@ -65,6 +65,7 @@ export async function ensureIndexes(): Promise<void> {
   const db = await controlDb();
   await db.collection("optimization_policies").createIndex({ dbName: 1 }, { unique: true });
   await db.collection("optimization_reports").createIndex({ dbName: 1, generatedAt: -1 });
+  await db.collection("weekly_query_reviews").createIndex({ dbName: 1, generatedAt: -1 });
   await db.collection("optimization_actions").createIndex({ dbName: 1, status: 1, createdAt: -1 });
   await db.collection("optimization_actions").createIndex({ dbName: 1, dedupeKey: 1 }, { unique: true, partialFilterExpression: { status: { $in: ["pending", "applying", "dispatch_pending", "reprocessing", "verifying"] } } });
   await db.collection("experiments").createIndex({ tenantApiKey: 1, status: 1 });
@@ -72,6 +73,10 @@ export async function ensureIndexes(): Promise<void> {
   await db.collection("experiment_metrics").createIndex({ experimentId: 1, asOf: -1 });
   await db.collection("agent_runs").createIndex({ tenantApiKey: 1, startedAt: -1 });
   await db.collection("rules").createIndex({ tenantApiKey: 1, status: 1 });
+  await db.collection("rules").createIndex({ dbName: 1, merchantQuery: 1 }, { unique: true, partialFilterExpression: { merchantQuery: { $type: "string" } } });
+  await db.collection("conversion_reports").createIndex({ dbName: 1, source: 1, generatedAt: -1 });
+  await db.collection("conversion_reports").createIndex({ runId: 1 }, { sparse: true });
+  await db.collection("agent_runs").createIndex({ dbName: 1, startedAt: -1 });
   await db.collection("catalog_change_audits").createIndex({ tenantApiKey: 1, appliedAt: -1 });
 }
 

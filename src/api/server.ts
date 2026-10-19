@@ -11,13 +11,20 @@ import { agentRoutes } from "./routes/agent.js";
 import { ruleRoutes } from "./routes/rules.js";
 import { optimizationRoutes } from "./routes/optimization.js";
 import { debugRoutes } from "./routes/debug.js";
-import { listTenants } from "../core/tenant.js";
+import { conversionRoutes } from "./routes/conversion.js";
+import { dashboardRoutes } from "./routes/dashboard.js";
+import { productRoutes } from "./routes/products.js";
+import { listStores } from "../core/tenant.js";
 import { getMongo, getRedis } from "../core/db.js";
+import { validateProductionConfig } from "../core/production-config.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export async function buildServer() {
-  const app = Fastify({ logger: true });
+  validateProductionConfig();
+  const app = Fastify({ logger: { serializers: {
+    req: req => ({ method: req.method, url: req.url?.split("?")[0], hostname: req.hostname }),
+  } } });
 
   await app.register(cors, { origin: true });
 
@@ -45,7 +52,7 @@ export async function buildServer() {
   // Unauthenticated on purpose (Render's health checker hits this with no
   // credentials) — mirrors dashboard-server's /health shape: booleans only,
   // no connection strings or other sensitive detail.
-  app.get("/api/health", async () => {
+  app.get("/api/health", async (_req, reply) => {
     const [redis, mongoOk] = await Promise.all([
       getRedis(),
       getMongo()
@@ -53,16 +60,18 @@ export async function buildServer() {
         .then(() => true)
         .catch(() => false),
     ]);
-    return {
-      ok: true,
+    const redisOk = !!redis?.isReady && await redis.ping().then(() => true).catch(() => false);
+    const ok = mongoOk && (process.env.NODE_ENV !== 'production' || redisOk);
+    return reply.code(ok ? 200 : 503).send({
+      ok,
       ts: new Date().toISOString(),
       services: {
-        redis: { connected: !!redis?.isOpen },
+        redis: { connected: redisOk },
         mongodb: { connected: mongoOk },
       },
-    };
+    });
   });
-  app.get("/api/tenants", async () => listTenants());
+  app.get("/api/tenants", async () => listStores());
 
   await app.register(experimentRoutes, { prefix: "/api" });
   await app.register(proposalRoutes, { prefix: "/api" });
@@ -72,6 +81,9 @@ export async function buildServer() {
   await app.register(debugRoutes, { prefix: "/api" });
 
   await app.register(optimizationRoutes, { prefix: "/api" });
+  await app.register(conversionRoutes, { prefix: "/api" });
+  await app.register(dashboardRoutes, { prefix: "/api" });
+  await app.register(productRoutes, { prefix: "/api" });
 
   // Serve built ops UI if present
   const uiDist = path.resolve(__dirname, "../../ui/dist");

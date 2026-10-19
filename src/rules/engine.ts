@@ -1,6 +1,7 @@
 import { ObjectId } from "mongodb";
 import { controlDb, ensureTenantRuleIndexes } from "../core/db.js";
 import { RuleDoc, RuleInput } from "../core/types.js";
+import { getTenantByApiKey } from "../core/tenant.js";
 import { publishActiveRules } from "./publisher.js";
 
 export async function createRule(input: RuleInput): Promise<RuleDoc> {
@@ -15,7 +16,11 @@ export async function createRule(input: RuleInput): Promise<RuleDoc> {
 export async function listRules(filter: { tenantApiKey?: string } = {}): Promise<RuleDoc[]> {
   const db = await controlDb();
   const q: Record<string, unknown> = {};
-  if (filter.tenantApiKey) q.tenantApiKey = filter.tenantApiKey;
+  if (filter.tenantApiKey) {
+    const tenant = await getTenantByApiKey(filter.tenantApiKey);
+    if (tenant) q.dbName = tenant.dbName;
+    else q.tenantApiKey = filter.tenantApiKey;
+  }
   return db.collection("rules").find(q).sort({ createdAt: -1 }).limit(200).toArray() as unknown as Promise<
     RuleDoc[]
   >;
@@ -30,7 +35,7 @@ export async function setRuleStatus(id: string, status: "active" | "disabled"): 
   const rule = await getRule(id);
   if (!rule) throw new Error("Rule not found");
   const db = await controlDb();
-  await db.collection("rules").updateOne({ _id: new ObjectId(id) }, { $set: { status } });
+  await db.collection("rules").updateOne({ _id: new ObjectId(id) }, { $set: { status }, $push: { history: { status, at: new Date() } } } as any);
   await publishActiveRules(rule.tenantApiKey);
   return (await getRule(id))!;
 }

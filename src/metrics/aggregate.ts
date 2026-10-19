@@ -1,6 +1,7 @@
 import { controlDb, tenantDb } from "../core/db.js";
 import { ArmMetrics, ExperimentDoc, MetricsSnapshot } from "../core/types.js";
 import { probVariantBeatsControlConv, probVariantBeatsControlRps, twoProportionZ } from "./stats.js";
+import { isPurchase, orderTotal, parseTime } from "../analytics/events.js";
 
 interface ExposureRow {
   session_id: string;
@@ -12,15 +13,23 @@ interface ExposureRow {
  * "timestamp at or after `from`", tolerant of the type inconsistency across
  * tenant collections: `queries` / `product_clicks` / `experiment_exposures`
  * store `timestamp` as a BSON date, while `cart` / `checkout_events` store an
- * ISO-8601 string. Mongo never matches a Date bound against a string value, so
- * a plain `{$gte: from}` silently counted zero add-to-carts and zero orders for
- * every experiment. $convert coerces both shapes; unparseable/missing values
- * become null, which sorts below any date and is therefore excluded.
+ * ISO-8601 string, and some plugins log unix seconds. Mongo never matches a
+ * Date bound against a string value, so a plain `{$gte: from}` silently counted
+ * zero add-to-carts and zero orders for every experiment. Numbers are read as
+ * seconds (below 1e12) or milliseconds; strings are $convert-ed; unparseable or
+ * missing values become null, which sorts below any date and is excluded.
  */
 function timestampAtOrAfter(from: Date) {
+  const ts = { $ifNull: ["$timestamp", "$created_at"] };
   return {
     $expr: {
-      $gte: [{ $convert: { input: "$timestamp", to: "date", onError: null, onNull: null } }, from],
+      $gte: [{
+        $cond: [
+          { $isNumber: ts },
+          { $toDate: { $cond: [{ $lt: [ts, 1e12] }, { $multiply: [ts, 1000] }, ts] } },
+          { $convert: { input: ts, to: "date", onError: null, onNull: null } },
+        ],
+      }, from],
     },
   };
 }
@@ -106,22 +115,26 @@ export async function aggregateExperiment(exp: ExperimentDoc): Promise<MetricsSn
           { $group: { _id: "$session_id" } },
         ])
         .toArray(),
+      // Orders are filtered in code: only checkout_completed (never a started
+      // checkout), timestamps in every shape, totals from whichever field the
+      // tenant's plugin writes (order_total / cart_total / total_price / orderData).
       db
         .collection("checkout_events")
-        .find({
-          $or: [{ session_id: sessionMatch }, { "orderData.session_id": sessionMatch }],
-          ...timeMatch,
-        })
-        .project({ session_id: 1, "orderData.total_price": 1, "orderData.total": 1, total_price: 1, total: 1 })
-        .toArray(),
+        .find({ $or: [{ session_id: sessionMatch }, { sessionId: sessionMatch }, { "orderData.session_id": sessionMatch }] })
+        .project({ session_id: 1, sessionId: 1, event_type: 1, order_id: 1, order_total: 1, cart_total: 1, total_price: 1, total: 1, orderData: 1, status: 1, financial_status: 1, items: 1, cart_items: 1, line_items: 1, timestamp: 1, created_at: 1 })
+        .limit(50_000)
+        .toArray()
+        .then((rows) => rows.filter((o: any) => isPurchase(o) && (parseTime(o.timestamp) ?? parseTime(o.created_at) ?? 0) >= +startedAt)),
     ]);
 
     let revenue = 0;
     const orderSessions = new Set<string>();
     const revBySession = new Map<string, number>();
+    const seenOrders = new Set<string>();
     for (const o of orderDocs as any[]) {
-      const sid = o.session_id ?? o.orderData?.session_id;
-      const amt = Number(o.orderData?.total_price ?? o.orderData?.total ?? o.total_price ?? o.total ?? 0) || 0;
+      if (o.order_id != null) { if (seenOrders.has(String(o.order_id))) continue; seenOrders.add(String(o.order_id)); }
+      const sid = o.session_id ?? o.sessionId ?? o.orderData?.session_id;
+      const amt = orderTotal(o) ?? 0;
       revenue += amt;
       if (sid) {
         orderSessions.add(sid);
