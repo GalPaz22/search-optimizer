@@ -9,6 +9,12 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: DASHBOARD_CHAT_ENGINE
+        value: studio
+      - key: STUDIO_SERVICE_URL
+        value: "https://tenant-studio.onrender.com"
+      - key: STUDIO_CUSTOMER_API_TOKEN
+        sync: false
       - key: MONGODB_URI
         sync: false
       - key: REDIS_URL

@@ -7,6 +7,7 @@ import { CatalogFilterProposalDoc, ProposalDoc, RuleInput, RuleProposalDoc } fro
 import { applyCatalogFilterChange } from "../../catalog/filters.js";
 import { createRule } from "../../rules/engine.js";
 import { applyProductChange } from "../../optimization/boosts.js";
+import { studioRequest } from '../../agent/studio-client.js';
 
 export async function proposalRoutes(app: FastifyInstance) {
   app.get("/proposals", async (req) => {
@@ -30,6 +31,20 @@ export async function proposalRoutes(app: FastifyInstance) {
       .collection("proposals")
       .findOne({ _id: new ObjectId(id), status: "pending" })) as ProposalDoc | CatalogFilterProposalDoc | RuleProposalDoc | null;
     if (!proposal) return reply.code(404).send({ error: "pending proposal not found" });
+    if ((proposal as any).kind === 'studioRevision') {
+      const lock = await db.collection('proposals').updateOne({ _id: proposal._id, status: 'pending' }, { $set: { status: 'applying' } });
+      if (lock.modifiedCount !== 1) return reply.code(409).send({ error: 'proposal was already reviewed' });
+      try {
+        const response = await studioRequest('approve', { apiKey: proposal.tenantApiKey, draftId: (proposal as any).studioDraftId }, AbortSignal.timeout(120000));
+        const data = await response.json() as any;
+        if (data.saved !== true) throw Error('הסטודיו לא אישר שמירה');
+        await db.collection('proposals').updateOne({ _id: proposal._id }, { $set: { status: 'approved', published: data.published === true, reviewedAt: new Date(), reviewedBy: by } });
+        return data;
+      } catch (error) {
+        await db.collection('proposals').updateOne({ _id: proposal._id, status: 'applying' }, { $set: { status: 'pending', applyError: (error as Error).message } });
+        return reply.code(409).send({ error: (error as Error).message });
+      }
+    }
 
     if (["productBoost", "productVisibility"].includes((proposal as any).kind)) {
       const lock = await db.collection("proposals").updateOne({ _id: new ObjectId(id), status: "pending" }, { $set: { status: "applying" } });

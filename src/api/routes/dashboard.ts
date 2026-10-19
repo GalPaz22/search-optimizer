@@ -7,6 +7,7 @@ import { controlDb, getRedis } from "../../core/db.js";
 import { publishActiveRules, ACTIVE_RULES_KEY } from "../../rules/publisher.js";
 import { RuleInput } from "../../core/types.js";
 import { clearSearchCache } from "../../optimization/boosts.js";
+import { dashboardChatEngine } from '../../agent/studio-client.js';
 
 // Share expensive reports across dashboard tabs; concurrent requests build once.
 const cache = new Map<string, { expires: number; result: Promise<unknown> }>();
@@ -97,7 +98,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
     if (!entry || entry.expires <= Date.now()) {
       for (const [k, v] of cache) if (v.expires <= Date.now()) cache.delete(k);
       const result = Promise.all([storeProfile(t.dbName), buildConversionReport(t, { days: count, persist: false })])
-        .then(([store, report]) => ({ store, report }))
+        .then(([store, report]) => ({ store, report, chat: { engine: dashboardChatEngine() === 'studio' ? 'tenant-studio' : 'optimizer' } }))
         .catch(error => { cache.delete(key); throw error; });
       entry = { expires: Date.now() + 60_000, result };
       cache.set(key, entry);

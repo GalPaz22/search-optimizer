@@ -10,7 +10,7 @@ async function withArtifacts(runs: any[]) {
   const db = await controlDb();
   const [proposals, actions] = ids.length ? await Promise.all([
     db.collection("proposals").find({ agentRunId: { $in: ids } })
-      .project({ agentRunId: 1, kind: 1, status: 1, hypothesis: 1, evidence: 1, boostChange: 1, visibilityChange: 1, "draftRule.name": 1, "draftRule.naturalLanguageText": 1, "draftRule.patch": 1, "draftExperiment.name": 1, appliedCount: 1, applyError: 1 }).toArray(),
+      .project({ agentRunId: 1, kind: 1, status: 1, hypothesis: 1, evidence: 1, boostChange: 1, visibilityChange: 1, studioChanges: 1, published: 1, "draftRule.name": 1, "draftRule.naturalLanguageText": 1, "draftRule.patch": 1, "draftExperiment.name": 1, appliedCount: 1, applyError: 1 }).toArray(),
     db.collection("optimization_actions").find({ agentRunId: { $in: ids }, kind: { $ne: "investigate" } })
       .project({ agentRunId: 1, kind: 1, status: 1, title: 1, rationale: 1, filter: 1, categories: 1, "selectedProducts._id": 1, "selectedProducts.name": 1, error: 1 }).toArray(),
   ]) : [[], []];
@@ -24,12 +24,13 @@ export async function agentRoutes(app: FastifyInstance) {
   // Returns at once with a run id; progress is read from /agent/runs/:id.
   app.post("/agent/run", async (req, reply) => {
     const { tenant } = req.query as { tenant?: string };
-    const { request, query, review, conversationId } = (req.body ?? {}) as { request?: string; query?: string; review?: boolean; conversationId?: string };
+    const { request, query, review, conversationId, days } = (req.body ?? {}) as { request?: string; query?: string; review?: boolean; conversationId?: string; days?: number };
     if (!tenant) return reply.code(400).send({ error: "tenant (apiKey) query param required" });
+    if (days !== undefined && ![7,30,90].includes(days)) return reply.code(400).send({ error: 'Invalid analytics window' });
     if (request !== undefined && (typeof request !== "string" || request.length > 2000)) return reply.code(400).send({ error: "request must be text of at most 2000 characters" });
     if (query !== undefined && (typeof query !== "string" || !query.trim() || query.length > 200)) return reply.code(400).send({ error: "query must be text of at most 200 characters" });
     try {
-      const started = await startAgentRun(tenant, { request, query, review: review === true, conversationId: typeof conversationId === "string" ? conversationId : undefined, trigger: "manual" });
+      const started = await startAgentRun(tenant, { request, query, days, review: review === true, conversationId: typeof conversationId === "string" ? conversationId : undefined, trigger: "manual" });
       return { runId: started.runId, status: started.status, conversationId: started.conversationId };
     } catch (e) {
       const message = (e as Error).message;

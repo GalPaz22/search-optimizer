@@ -9,6 +9,7 @@ import { analyticsFor, createRunContext, rememberQueries, RunContext, workspaceC
 import { ASK_PROMPT, openingMessage, QUERY_PROMPT, queryOpeningMessage, SYSTEM_PROMPT } from "./prompts.js";
 import { buildAgentServer, MCP_SERVER } from "./tools/index.js";
 import { saveReport } from "./tools/report.js";
+import { dashboardChatEngine, studioConfig, runStudioTurn, saveStudioProposals } from './studio-client.js';
 
 // Spending limits are opt-in: unset means no cap (spend is still recorded per run).
 export const MONTHLY_BUDGET_USD = Number(process.env.AGENT_MONTHLY_BUDGET_USD) || Infinity;
@@ -148,7 +149,7 @@ async function prepareQuestion(tenant: Tenant, runId: ObjectId, request: string,
 export type RunMode = "review" | "query" | "ask";
 const LIGHT: Record<Exclude<RunMode, "review">, { prompt: string; tools: string[] }> = { query: { prompt: QUERY_PROMPT, tools: QUICK_TOOLS }, ask: { prompt: ASK_PROMPT, tools: ASK_TOOLS } };
 
-async function execute(tenant: Tenant, runId: ObjectId, opts: { mode: RunMode; request?: string | null; query?: string | null; conversationId?: string; spentSoFar: number }, abort: AbortController) {
+async function execute(tenant: Tenant, runId: ObjectId, opts: { mode: RunMode; engine: string; days?: number; request?: string | null; query?: string | null; conversationId?: string; spentSoFar: number }, abort: AbortController) {
   const cdb = await controlDb(), log = stepLog(cdb, runId), live = feed(String(runId));
   let summary = "", toolCalls = 0, costUsd = 0, ctx: RunContext | null = null;
   // The latest report the agent tried to submit: kept so a budget cut during that call does not lose it.
@@ -164,6 +165,27 @@ async function execute(tenant: Tenant, runId: ObjectId, opts: { mode: RunMode; r
   const light = opts.mode === "review" ? null : LIGHT[opts.mode];
   const timeout = setTimeout(() => abort.abort(), light ? 10 * 60_000 : RUN_TIMEOUT_MS);
   try {
+    if (opts.engine === 'studio') {
+      await log.flush({ status: 'running', engine: 'tenant-studio', model: 'tenant-studio' });
+      const [report, previous] = await Promise.all([
+        buildConversionReport(tenant, { days: opts.days || 30, persist: false }).catch(() => null),
+        cdb.collection('agent_runs').find({ dbName: tenant.dbName, conversationId: opts.conversationId, _id: { $ne: runId }, status: 'completed' }).sort({ startedAt: -1 }).limit(8).toArray(),
+      ]);
+      const history = previous.reverse().flatMap(r => [{ role: 'user', text: String(r.request || '').slice(0, 2000) }, { role: 'assistant', text: String(r.summary || '').slice(0, 8000) }]);
+      const message = [opts.query ? `בדיקת החיפוש ״${opts.query}״.` : '', opts.request || (opts.mode === 'review' ? 'סקור את ביצועי החיפוש והצע שיפורים מבוססים. הכן שינויים לאישור בלבד.' : 'בדוק את החיפוש לפי נתוני החנות.')].filter(Boolean).join(' ');
+      const result = await runStudioTurn({ apiKey: tenant.apiKey, message, history, analytics: report ? reportDigest(report) : null }, abort.signal, async event => {
+        if (event.type === 'tool') { toolCalls++; live.step(event.name); log.add({ id: event.id, type: 'tool', name: event.name }); }
+        else if (event.type === 'tool_done') log.result(event.id, event.ok === true, String(event.text || ''));
+        else log.add({ id: new ObjectId().toString(), type: 'note', text: String(event.text || '').slice(0, 1000) });
+        await log.flush();
+      });
+      if (abort.signal.aborted) throw Error('Stopped');
+      summary = result.summary;
+      const proposals = await saveStudioProposals(tenant, String(runId), result);
+      live.reset(); live.text(summary);
+      await log.flush({ status: 'completed', endedAt: new Date(), toolCalls, proposals, reportMissing: false, summary, engine: 'tenant-studio', studioUsage: result.usage, studioModelCalls: result.modelCalls, costTracking: 'studio-provider' });
+      return { runId: String(runId), summary };
+    }
     const setup = opts.mode === "query" ? await prepareQueryCheck(tenant, runId, opts.query!, opts.request, log)
       : opts.mode === "ask" ? await prepareQuestion(tenant, runId, opts.request!, opts.conversationId ?? String(runId), log)
         : await prepareReview(tenant, runId, opts.request, log);
@@ -265,9 +287,11 @@ async function runCounts(cdb: Runs, tenant: Tenant, runId: ObjectId) {
  * and the per-store lock are checked first, so an over-budget or already
  * running store never reaches the model.
  */
-export async function startAgentRun(apiKey: string, opts: { request?: string | null; query?: string | null; review?: boolean; conversationId?: string; trigger?: "manual" | "schedule" } = {}) {
+export async function startAgentRun(apiKey: string, opts: { request?: string | null; query?: string | null; review?: boolean; days?: number; conversationId?: string; trigger?: "manual" | "schedule" } = {}) {
   const tenant = await getTenantByApiKey(apiKey);
   if (!tenant) throw new Error("Unknown store");
+  const engine = opts.trigger === 'schedule' ? 'optimizer' : dashboardChatEngine();
+  if (engine === 'studio') studioConfig();
   const cdb = await controlDb(), request = opts.request?.trim() ? opts.request.trim().slice(0, 2000) : null;
   const spentSoFar = await getMonthlySpend(cdb, apiKey);
   if (spentSoFar >= MONTHLY_BUDGET_USD) {
@@ -287,9 +311,9 @@ export async function startAgentRun(apiKey: string, opts: { request?: string | n
   const term = opts.query?.trim().slice(0, 200) || null;
   const mode: RunMode = term ? "query" : request && !opts.review ? "ask" : "review";
   const conversationId = opts.conversationId && ObjectId.isValid(opts.conversationId) && (await cdb.collection("agent_runs").findOne({ dbName: tenant.dbName, conversationId: opts.conversationId }, { projection: { _id: 1 } })) ? opts.conversationId : String(runId);
-  await cdb.collection("agent_runs").insertOne({ _id: runId, tenantApiKey: apiKey, dbName: tenant.dbName, conversationId, request: request ?? (term ? `בדיקת החיפוש ״${term}״` : mode === "review" ? "סקירה מלאה של החנות" : null), query: term, mode, trigger: opts.trigger ?? "manual", model: mode === "review" ? MODEL : QUICK_MODEL, startedAt: new Date(), lastProgressAt: new Date(), status: "queued", steps: [], toolCalls: 0, proposals: 0 });
+  await cdb.collection("agent_runs").insertOne({ _id: runId, tenantApiKey: apiKey, dbName: tenant.dbName, conversationId, request: request ?? (term ? `בדיקת החיפוש ״${term}״` : mode === "review" ? "סקירה מלאה של החנות" : null), query: term, mode, trigger: opts.trigger ?? "manual", engine: engine === 'studio' ? 'tenant-studio' : 'optimizer', model: engine === 'studio' ? 'tenant-studio' : mode === "review" ? MODEL : QUICK_MODEL, startedAt: new Date(), lastProgressAt: new Date(), status: "queued", steps: [], toolCalls: 0, proposals: 0 });
   active.set(String(runId), abort);
-  const done = execute(tenant, runId, { mode, request, query: term, conversationId, spentSoFar }, abort).finally(async () => {
+  const done = execute(tenant, runId, { mode, engine, days: opts.days, request, query: term, conversationId, spentSoFar }, abort).finally(async () => {
     active.delete(String(runId));
     await locks.deleteOne({ _id: tenant.dbName, owner });
   });
