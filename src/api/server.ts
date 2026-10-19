@@ -14,6 +14,7 @@ import { debugRoutes } from "./routes/debug.js";
 import { conversionRoutes } from "./routes/conversion.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
 import { productRoutes } from "./routes/products.js";
+import { conciergeRoutes } from './routes/concierge.js';
 import { listStores } from "../core/tenant.js";
 import { getMongo, getRedis } from "../core/db.js";
 import { validateProductionConfig } from "../core/production-config.js";
@@ -84,6 +85,7 @@ export async function buildServer() {
   await app.register(conversionRoutes, { prefix: "/api" });
   await app.register(dashboardRoutes, { prefix: "/api" });
   await app.register(productRoutes, { prefix: "/api" });
+  await app.register(conciergeRoutes, { prefix: '/api' });
 
   // Serve built ops UI if present
   const uiDist = path.resolve(__dirname, "../../ui/dist");
